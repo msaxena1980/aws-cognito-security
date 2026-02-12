@@ -1,0 +1,22 @@
+@import './base.css';
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-weight: normal;
+}
+
+a,
+.green {
+  text-decoration: none;
+  color: var(--vt-c-green-1);
+  transition: 0.4s;
+  padding: 3px;
+}
+
+@media (hover: hover) {
+  a:hover {
+    background-color: var(--vt-c-green-2);
+  }
+}
