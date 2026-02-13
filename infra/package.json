@@ -7,7 +7,6 @@
   "scripts": {
     "cdk": "cdk",
     "create": "node scripts/create.js",
-    "list": "node scripts/list.js",
     "destroy": "node scripts/destroy.js"
   },
   "dependencies": {

@@ -8,7 +8,7 @@ const app = new cdk.App();
 new InfraStack(app, 'InfraStack', {
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION,
+    region: 'us-east-1',
   },
-  description: 'Step-by-step infra stack (Cognito, Lambda, API Gateway, DynamoDB to be added later)',
+  description: 'AWS Cognito Security Demo: Cognito User Pool and App Client',
 });

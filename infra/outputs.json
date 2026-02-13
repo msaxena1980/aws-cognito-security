@@ -1,0 +1,9 @@
+{
+  "InfraStack": {
+    "UserPoolClientId": "3l83142fip72bia45m51tcvlst",
+    "AuthApiEndpointF49088BF": "https://dhubvtb9v0.execute-api.us-east-1.amazonaws.com/prod/",
+    "UserPoolId": "us-east-1_II8PghpQq",
+    "ApiUrl": "https://dhubvtb9v0.execute-api.us-east-1.amazonaws.com/prod/",
+    "Region": "us-east-1"
+  }
+}
