@@ -1,8 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 
 /**
- * Minimal infra stack. Resources (Cognito, Lambda, API Gateway, DynamoDB)
- * will be added step by step in later changes.
+ * Infra stack including Cognito, Lambda triggers, API Gateway, 
+ * and a cost-optimized DynamoDB table.
  */
 export class InfraStack extends cdk.Stack {
   constructor(scope, id, props) {
@@ -38,7 +38,7 @@ export class InfraStack extends cdk.Stack {
         requireSymbols: true,
       },
       accountRecovery: cdk.aws_cognito.AccountRecovery.EMAIL_AND_PHONE_WITHOUT_MFA,
-      advancedSecurityMode: cdk.aws_cognito.AdvancedSecurityMode.ESSENTIALS,
+      advancedSecurityMode: cdk.aws_cognito.AdvancedSecurityMode.OFF, // Set to OFF for strict Free Tier compliance
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
@@ -85,14 +85,63 @@ export class InfraStack extends cdk.Stack {
       description: 'The AWS Region',
     });
 
-    // 3. DynamoDB Table
-    const table = new cdk.aws_dynamodb.Table(this, 'DataTable', {
-      partitionKey: { name: 'pk', type: cdk.aws_dynamodb.AttributeType.STRING },
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo
-      billingMode: cdk.aws_dynamodb.BillingMode.PAY_PER_REQUEST,
+    // 3. DynamoDB Table (Single Table Design)
+    const table = new cdk.aws_dynamodb.Table(this, 'UserSecurityTable', {
+       tableName: 'UserSecurity',
+       partitionKey: { name: 'pk', type: cdk.aws_dynamodb.AttributeType.STRING },
+       sortKey: { name: 'sk', type: cdk.aws_dynamodb.AttributeType.STRING },
+       removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo
+       billingMode: cdk.aws_dynamodb.BillingMode.PROVISIONED,
+       readCapacity: 5,
+       writeCapacity: 5,
+     });
+
+    // 4. Lambda Functions for Cognito Triggers
+    const preSignUpLambda = new cdk.aws_lambda.Function(this, 'PreSignUpHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'preSignUp.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+      },
     });
 
-    // 4. Lambda Function
+    const postConfirmationLambda = new cdk.aws_lambda.Function(this, 'PostConfirmationHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'postConfirmation.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+      },
+    });
+
+    const postAuthenticationLambda = new cdk.aws_lambda.Function(this, 'PostAuthenticationHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'postAuthentication.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+        // SES_SENDER_EMAIL: 'your-verified-email@example.com', // Should be set by user or via parameter
+      },
+    });
+
+    // Grant permissions
+     table.grantReadWriteData(preSignUpLambda);
+     table.grantReadWriteData(postConfirmationLambda);
+     table.grantReadWriteData(postAuthenticationLambda);
+     
+     // Grant SES permission to PostAuthentication Lambda
+     postAuthenticationLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+       actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+       resources: ['*'], // In production, restrict to specific verified identities
+     }));
+ 
+     // Add triggers to User Pool
+     userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.PRE_SIGN_UP, preSignUpLambda);
+     userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.POST_CONFIRMATION, postConfirmationLambda);
+     userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.POST_AUTHENTICATION, postAuthenticationLambda);
+
+    // 5. Existing Hello Lambda (Updated to use new table)
     const helloLambda = new cdk.aws_lambda.Function(this, 'HelloHandler', {
       runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
       code: cdk.aws_lambda.Code.fromAsset('lambda'),

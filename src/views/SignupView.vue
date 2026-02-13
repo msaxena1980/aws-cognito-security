@@ -22,7 +22,11 @@ async function signup() {
       });
     }
   } catch (err) {
-    error.value = err.message || 'Failed to signup';
+    if (err.name === 'UsernameExistsException') {
+      error.value = 'This email is already registered. Please login to your account.';
+    } else {
+      error.value = err.message || 'Failed to signup';
+    }
   } finally {
     loading.value = false;
   }
@@ -44,7 +48,9 @@ async function signup() {
         <label for="password">Password</label>
         <input type="password" id="password" v-model="password" required />
       </div>
-      <div v-if="error" class="error-message">{{ error }}</div>
+      <div v-if="error" class="error-message">
+        {{ error }}
+      </div>
       <button type="submit" :disabled="loading" class="auth-button">
         {{ loading ? 'Signing up...' : 'Signup' }}
       </button>
@@ -88,6 +94,14 @@ async function signup() {
 .error-message {
   color: #ff4d4f;
   font-size: 0.875rem;
+}
+
+.action-link {
+  color: var(--vt-c-green-1);
+  text-decoration: underline;
+  cursor: pointer;
+  margin-top: 0.5rem;
+  font-weight: 600;
 }
 
 .info-message {

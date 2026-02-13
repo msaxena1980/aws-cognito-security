@@ -1,7 +1,7 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { handleSignIn } from '../services/auth';
+import { handleSignIn, handleResendSignUpCode } from '../services/auth';
 
 const email = ref('');
 const password = ref('');
@@ -10,20 +10,103 @@ const loading = ref(false);
 const router = useRouter();
 const route = useRoute();
 
+const isUnconfirmed = ref(false);
+
+onMounted(() => {
+  if (route.query.email) {
+    email.value = route.query.email;
+  }
+});
+
+async function handleUnconfirmed(emailValue) {
+  if (!emailValue) {
+    console.error('handleUnconfirmed called without email');
+    error.value = 'Email is missing. Please enter your email and try again.';
+    return;
+  }
+
+  isUnconfirmed.value = true;
+  error.value = 'Account unverified. Sending a new verification code...';
+  
+  try {
+    console.log('Attempting auto-resend for:', emailValue);
+    const resendResult = await handleResendSignUpCode(emailValue);
+    console.log('Auto-resend successful:', resendResult);
+    error.value = 'Verification code sent to your inbox! Redirecting...';
+  } catch (resendErr) {
+    console.error('Auto-resend failed during login:', resendErr);
+    // If resend fails (e.g. limit reached), we still want to redirect
+    error.value = `Account unverified. ${resendErr.message || 'Could not send new code.'} Redirecting to verification...`;
+  } finally {
+    console.log('Scheduling redirection to /confirm-signup');
+    setTimeout(() => {
+      router.push({
+        path: '/confirm-signup',
+        query: { email: emailValue, resent: 'true' }
+      });
+    }, 3000);
+  }
+}
+
 async function login() {
+  if (!email.value || !password.value) {
+    error.value = 'Email and password are required.';
+    return;
+  }
+
   loading.value = true;
   error.value = '';
+  isUnconfirmed.value = false;
+  
   try {
-    const { isSignedIn } = await handleSignIn(email.value, password.value);
+    console.log('--- Login Attempt Start ---');
+    console.log('Email:', email.value);
+    
+    const { isSignedIn, nextStep } = await handleSignIn(email.value, password.value);
+    console.log('Login successful? ', isSignedIn);
+    console.log('Next step:', nextStep);
+    
     if (isSignedIn) {
       const redirectPath = route.query.redirect || '/admin';
       router.push(redirectPath);
+    } else if (nextStep && nextStep.signInStep === 'CONFIRM_SIGN_UP') {
+      console.log('Detected unconfirmed account via nextStep');
+      await handleUnconfirmed(email.value);
+    } else {
+      error.value = 'Login successful but further action required: ' + (nextStep?.signInStep || 'Unknown step');
     }
   } catch (err) {
-    error.value = err.message || 'Failed to login';
+    console.error('--- Login Attempt Error ---');
+    console.error('Full Error Object:', err);
+    console.error('Error Name:', err.name);
+    console.error('Error Code:', err.code);
+    console.error('Error Message:', err.message);
+    
+    const errorName = err.name || err.code || '';
+    const errorMessage = err.message || '';
+    
+    // Check for unconfirmed status by name OR by message content
+    if (errorName === 'UserNotConfirmedException' || errorMessage.toLowerCase().includes('confirm') || errorMessage.toLowerCase().includes('verify')) {
+      console.log('Detected unconfirmed account via error catch');
+      await handleUnconfirmed(email.value);
+    } else if (errorName === 'NotAuthorizedException') {
+      error.value = 'Incorrect email or password.';
+    } else if (errorName === 'UserNotFoundException') {
+      error.value = 'No account found with this email.';
+    } else {
+      error.value = `Login failed: ${errorMessage} (${errorName})`;
+    }
   } finally {
     loading.value = false;
+    console.log('--- Login Attempt End ---');
   }
+}
+
+function goToVerification() {
+  router.push({
+    path: '/confirm-signup',
+    query: { email: email.value }
+  });
 }
 </script>
 
@@ -42,7 +125,12 @@ async function login() {
         <label for="password">Password</label>
         <input type="password" id="password" v-model="password" required />
       </div>
-      <div v-if="error" class="error-message">{{ error }}</div>
+      <div v-if="error" class="error-message">
+        {{ error }}
+        <div v-if="isUnconfirmed" class="action-link" @click="goToVerification">
+          Click here to verify your account
+        </div>
+      </div>
       <button type="submit" :disabled="loading" class="auth-button">
         {{ loading ? 'Logging in...' : 'Login' }}
       </button>
@@ -89,6 +177,14 @@ async function login() {
 .error-message {
   color: #ff4d4f;
   font-size: 0.875rem;
+}
+
+.action-link {
+  color: var(--vt-c-green-1);
+  text-decoration: underline;
+  cursor: pointer;
+  margin-top: 0.5rem;
+  font-weight: 600;
 }
 
 .info-message {

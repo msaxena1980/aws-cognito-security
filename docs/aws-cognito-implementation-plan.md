@@ -110,7 +110,8 @@ No code changes are required in the app for this section; it is all in AWS Conso
 
 ## 5. Flow Summary (How It All Works Together)
 
-- **Sign up:** User submits email/phone and password → Cognito sends verification code → user confirms → account created. If MFA is required, first sign-in prompts MFA setup (SMS/Email/TOTP).
+- **Sign up:** User submits email/phone and password → Cognito sends verification code → user confirms → account created.
+    - **Resend Code:** Users can request a new verification code if they didn't receive the first one. For security, this is limited to **3 attempts** per session.
 - **Sign in:** User enters username + password → if MFA optional/required and configured, Cognito returns MFA challenge → user submits SMS/Email/TOTP code → tokens issued.
 - **Forgot password:** User requests reset → Cognito sends code to email or SMS (per recovery settings) → user submits code + new password → password updated.
 - **Email/SMS OTP:** As MFA: after password, Cognito sends OTP to email or phone; user enters code. As sign-in (passwordless): enable EMAIL_OTP/SMS_OTP in user pool; user requests OTP and signs in with code (no password).
@@ -167,7 +168,9 @@ Optional later: SES for Cognito email; SNS for SMS OTP/MFA.
 ### 7.3 Stack Logic (Summary)
 
 - **Cognito:** `UserPool` (sign-in with email/username, standard attributes, password policy, account recovery, MFA optional); `UserPoolClient` (no secret, OAuth flows, callback URLs from context).
-- **DynamoDB:** `Table` with partition key; removal policy configurable.
+- **DynamoDB:** `Table` with partition key `pk` and sort key `sk`.
+    - **Stable Partition Key:** Uses the Cognito `sub` (unique UUID) as the Partition Key (`USER#<sub-uuid>`). This ensures user profiles remain intact even if their email address changes.
+    - **Data Synchronization:** Profile data (like email) is updated on every login via the `PostAuthentication` trigger to ensure the database remains in sync with the Cognito User Pool.
 - **Lambda:** `NodejsFunction` or `Function`; env `TABLE_NAME`; `table.grantReadWriteData(lambda)`.
 - **API Gateway:** `RestApi` or `HttpApi`; `CognitoUserPoolsAuthorizer`; resource + Lambda integration; deploy stage.
 - **Outputs:** User Pool ID, Client ID, API endpoint URL, Table name (for Vue `.env`).

@@ -25,7 +25,17 @@ async function forgotPassword() {
       }, 2000);
     }
   } catch (err) {
-    error.value = err.message || 'Failed to send reset code';
+    if (err.name === 'InvalidParameterException' && err.message.includes('verified')) {
+      error.value = 'Cannot reset password for unverified accounts. Please login to verify your email first. Redirecting to login...';
+      setTimeout(() => {
+        router.push({
+          path: '/login',
+          query: { email: email.value }
+        });
+      }, 3000);
+    } else {
+      error.value = err.message || 'Failed to send reset code';
+    }
   } finally {
     loading.value = false;
   }

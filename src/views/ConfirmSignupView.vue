@@ -1,24 +1,33 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { handleConfirmSignUp } from '../services/auth';
+import { handleConfirmSignUp, handleResendSignUpCode } from '../services/auth';
 
 const email = ref('');
 const code = ref('');
 const error = ref('');
 const loading = ref(false);
+const resendLoading = ref(false);
+const resendAttempts = ref(0);
+const resendSuccess = ref('');
 const router = useRouter();
 const route = useRoute();
+
+const canResend = computed(() => resendAttempts.value < 3);
 
 onMounted(() => {
   if (route.query.email) {
     email.value = route.query.email;
+  }
+  if (route.query.resent === 'true') {
+    resendSuccess.value = 'A new verification code has been sent to your inbox. Please check your email.';
   }
 });
 
 async function confirm() {
   loading.value = true;
   error.value = '';
+  resendSuccess.value = '';
   try {
     const { isSignUpComplete } = await handleConfirmSignUp(email.value, code.value);
     if (isSignUpComplete) {
@@ -28,6 +37,24 @@ async function confirm() {
     error.value = err.message || 'Failed to confirm account';
   } finally {
     loading.value = false;
+  }
+}
+
+async function resendCode() {
+  if (!canResend.value) return;
+  
+  resendLoading.value = true;
+  error.value = '';
+  resendSuccess.value = '';
+  
+  try {
+    await handleResendSignUpCode(email.value);
+    resendAttempts.value++;
+    resendSuccess.value = `Verification code resent successfully. (${3 - resendAttempts.value} attempts remaining)`;
+  } catch (err) {
+    error.value = err.message || 'Failed to resend verification code';
+  } finally {
+    resendLoading.value = false;
   }
 }
 </script>
@@ -46,9 +73,22 @@ async function confirm() {
         <input type="text" id="code" v-model="code" required />
       </div>
       <div v-if="error" class="error-message">{{ error }}</div>
-      <button type="submit" :disabled="loading" class="auth-button">
-        {{ loading ? 'Confirming...' : 'Confirm' }}
-      </button>
+      <div v-if="resendSuccess" class="success-message">{{ resendSuccess }}</div>
+      
+      <div class="button-group">
+        <button type="submit" :disabled="loading" class="auth-button">
+          {{ loading ? 'Confirming...' : 'Confirm' }}
+        </button>
+        
+        <button 
+          type="button" 
+          @click="resendCode" 
+          :disabled="resendLoading || !canResend" 
+          class="resend-button"
+        >
+          {{ resendLoading ? 'Resending...' : (canResend ? 'Resend Code' : 'Resend Limit Reached') }}
+        </button>
+      </div>
     </form>
   </div>
 </template>
@@ -88,6 +128,17 @@ async function confirm() {
   font-size: 0.875rem;
 }
 
+.success-message {
+  color: #52c41a;
+  font-size: 0.875rem;
+}
+
+.button-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .auth-button {
   padding: 0.75rem;
   background: var(--vt-c-green-1);
@@ -96,6 +147,23 @@ async function confirm() {
   border-radius: 4px;
   cursor: pointer;
   font-weight: 600;
+}
+
+.resend-button {
+  padding: 0.75rem;
+  background: transparent;
+  color: var(--vt-c-green-1);
+  border: 1px solid var(--vt-c-green-1);
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.resend-button:disabled {
+  color: var(--color-text);
+  border-color: var(--color-border);
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .auth-button:disabled {

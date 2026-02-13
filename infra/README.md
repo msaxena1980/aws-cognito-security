@@ -35,4 +35,6 @@ npm run destroy
 
 ## Current stack
 
-- **InfraStack** – Empty for now (no resources). Adding Cognito, Lambda, API Gateway, and DynamoDB will be done in separate steps.
+- **InfraStack** – Includes Cognito User Pool, DynamoDB (UserSecurity), Lambda Triggers, and API Gateway.
+- **DynamoDB Table**: `UserSecurity` (Provisioned 5 RCU/WCU for Free Tier).
+- **Cognito**: Advanced Security Mode is `OFF` to ensure Free Tier compliance.

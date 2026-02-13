@@ -1,4 +1,4 @@
-import { signUp, confirmSignUp, signIn, signOut, getCurrentUser, fetchAuthSession, resetPassword, confirmResetPassword } from 'aws-amplify/auth';
+import { signUp, confirmSignUp, resendSignUpCode, signIn, signOut, getCurrentUser, fetchAuthSession, resetPassword, confirmResetPassword } from 'aws-amplify/auth';
 import { reactive } from 'vue';
 
 export const authState = reactive({
@@ -33,7 +33,12 @@ export async function handleSignUp(email, password) {
         });
         return { isSignUpComplete, userId, nextStep };
     } catch (error) {
-        console.error('Error signing up:', error);
+        console.error('Error signing up:', {
+            name: error.name,
+            message: error.message,
+            recoverySuggestion: error.recoverySuggestion,
+            underlyingError: error
+        });
         throw error;
     }
 }
@@ -51,15 +56,71 @@ export async function handleConfirmSignUp(email, code) {
     }
 }
 
+export async function handleResendSignUpCode(email) {
+    try {
+        console.log('Resending signup code to:', email);
+        const output = await resendSignUpCode({ username: email });
+        console.log('Resend output:', output);
+        return output;
+    } catch (error) {
+        console.error('Detailed Resend Error:', {
+            name: error.name,
+            code: error.code,
+            message: error.message,
+            underlying: error
+        });
+        throw error;
+    }
+}
+
+// Device Fingerprinting Logic
+function getDeviceId() {
+    let deviceId = localStorage.getItem('app_device_id');
+    if (!deviceId) {
+        deviceId = crypto.randomUUID();
+        localStorage.setItem('app_device_id', deviceId);
+    }
+    return deviceId;
+}
+
+function getDeviceMetadata() {
+    const userAgent = navigator.userAgent;
+    let deviceType = 'web';
+    
+    if (/mobile/i.test(userAgent)) deviceType = 'mobile';
+    else if (/tablet/i.test(userAgent)) deviceType = 'tablet';
+    else deviceType = 'desktop';
+
+    return {
+        deviceId: getDeviceId(),
+        deviceType,
+        os: navigator.platform,
+        browser: navigator.vendor || 'Unknown',
+        // In a real mobile app, you would bridge to get IMEI here.
+        // For web, we can only provide placeholders.
+        imei: 'N/A' 
+    };
+}
+
 export async function handleSignIn(email, password) {
     try {
-        const { isSignedIn, nextStep } = await signIn({ username: email, password });
+        console.log('Attempting sign-in for:', email);
+        const { isSignedIn, nextStep } = await signIn({ 
+            username: email, 
+            password
+        });
+        
         if (isSignedIn) {
             await checkAuth();
         }
         return { isSignedIn, nextStep };
     } catch (error) {
-        console.error('Error signing in:', error);
+        console.error('Error signing in:', {
+            name: error.name,
+            message: error.message,
+            recoverySuggestion: error.recoverySuggestion,
+            underlyingError: error
+        });
         throw error;
     }
 }
