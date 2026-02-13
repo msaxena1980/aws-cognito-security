@@ -1,0 +1,21 @@
+{
+  "name": "infra",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CDK infrastructure (create/list/destroy with confirmation)",
+  "scripts": {
+    "cdk": "cdk",
+    "create": "node scripts/create.js",
+    "list": "node scripts/list.js",
+    "destroy": "node scripts/destroy.js"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18"
+  }
+}

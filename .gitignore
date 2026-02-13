@@ -37,3 +37,7 @@ __screenshots__/
 
 # Vite
 *.timestamp-*-*.mjs
+
+# CDK
+infra/cdk.out
+infra/cdk.context.json

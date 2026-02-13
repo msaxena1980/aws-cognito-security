@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+
+import * as cdk from 'aws-cdk-lib';
+import { InfraStack } from '../lib/infra-stack.js';
+
+const app = new cdk.App();
+
+new InfraStack(app, 'InfraStack', {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: process.env.CDK_DEFAULT_REGION,
+  },
+  description: 'Step-by-step infra stack (Cognito, Lambda, API Gateway, DynamoDB to be added later)',
+});
