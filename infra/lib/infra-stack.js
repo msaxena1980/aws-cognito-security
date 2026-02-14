@@ -179,6 +179,47 @@ export class InfraStack extends cdk.Stack {
       resources: [userPool.userPoolArn],
     }));
 
+    // 6b. User Vault Lambda (secure, authenticated)
+    const vaultLambda = new cdk.aws_lambda.Function(this, 'UserVaultHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'vault.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+      },
+    });
+    table.grantReadWriteData(vaultLambda);
+    
+    const kmsKey = new cdk.aws_kms.Key(this, 'UserVaultKmsKey', {
+      enableKeyRotation: true,
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
+    kmsKey.grantEncryptDecrypt(vaultLambda);
+    vaultLambda.addEnvironment('KMS_KEY_ID', kmsKey.keyId);
+
+    // Account deletion Lambda (authenticated)
+    const accountLambda = new cdk.aws_lambda.Function(this, 'AccountHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'account.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+        USER_POOL_ID: userPool.userPoolId,
+        KMS_KEY_ID: kmsKey.keyId,
+        // SES_SENDER_EMAIL can be set via environment when deploying
+      },
+    });
+    table.grantReadWriteData(accountLambda);
+    kmsKey.grantEncryptDecrypt(accountLambda);
+    accountLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['cognito-idp:AdminDeleteUser'],
+      resources: [userPool.userPoolArn],
+    }));
+    accountLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: ['*'],
+    }));
+
     // 7. API Gateway with Cognito Authorizer
     const api = new cdk.aws_apigateway.RestApi(this, 'AuthApi', {
       restApiName: 'Cognito Security Demo API',
@@ -200,6 +241,48 @@ export class InfraStack extends cdk.Stack {
 
     const authMethodsResource = api.root.addResource('auth-methods');
     authMethodsResource.addMethod('GET', new cdk.aws_apigateway.LambdaIntegration(getAuthMethodsLambda)); // Public endpoint
+
+    // Vault endpoints (authenticated)
+    const vaultResource = api.root.addResource('vault');
+    vaultResource.addMethod('GET', new cdk.aws_apigateway.LambdaIntegration(vaultLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    vaultResource.addMethod('PUT', new cdk.aws_apigateway.LambdaIntegration(vaultLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    
+    const passphraseResource = api.root.addResource('passphrase');
+    passphraseResource.addMethod('GET', new cdk.aws_apigateway.LambdaIntegration(vaultLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    passphraseResource.addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(vaultLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    const verifyPassphraseResource = passphraseResource.addResource('verify');
+    verifyPassphraseResource.addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(vaultLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+
+    // Account deletion endpoints (authenticated)
+    const accountResource = api.root.addResource('account');
+    const deleteResource = accountResource.addResource('delete');
+    deleteResource.addResource('start').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(accountLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    deleteResource.addResource('verify').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(accountLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    deleteResource.addResource('complete').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(accountLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
 
     // Add Gateway Responses to handle CORS for 4xx and 5xx errors
     api.addGatewayResponse('Default4xxResponse', {
