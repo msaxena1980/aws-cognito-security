@@ -1,15 +1,19 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { handleSignIn, handleResendSignUpCode } from '../services/auth';
+import { handleSignIn, handleResendSignUpCode, getAuthMethods } from '../services/auth';
 
 const email = ref('');
 const password = ref('');
+const otpCode = ref('');
 const error = ref('');
 const loading = ref(false);
 const router = useRouter();
 const route = useRoute();
 
+const step = ref('email'); // 'email', 'methods', 'auth'
+const supportedMethods = ref({});
+const selectedMethod = ref('');
 const isUnconfirmed = ref(false);
 
 onMounted(() => {
@@ -17,6 +21,62 @@ onMounted(() => {
     email.value = route.query.email;
   }
 });
+
+async function nextStep() {
+  if (!email.value) {
+    error.value = 'Email is required.';
+    return;
+  }
+
+  loading.value = true;
+  error.value = '';
+  
+  try {
+    const result = await getAuthMethods(email.value);
+    
+    if (result.isUnconfirmed) {
+      console.log('User is unconfirmed, triggering auto-resend and redirect...');
+      await handleUnconfirmed(email.value);
+      return;
+    }
+
+    supportedMethods.value = result;
+    
+    // Define valid login methods (Password and Passkeys only)
+    const validLoginMethods = ['password', 'passkeys'];
+    const activeMethods = Object.keys(result).filter(k => result[k] && validLoginMethods.includes(k));
+    
+    // Check if Passkey is supported on this device
+    const isPasskeySupported = window.PublicKeyCredential && 
+                               await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    
+    // Refined active methods: only include passkeys if supported by device
+    const deviceActiveMethods = activeMethods.filter(m => m !== 'passkeys' || isPasskeySupported);
+
+    if (deviceActiveMethods.length <= 1) {
+      // If only password or nothing (default to password), go straight to auth
+      selectedMethod.value = deviceActiveMethods.length === 1 ? deviceActiveMethods[0] : 'password';
+      step.value = 'auth';
+    } else {
+      // Multiple options available (Password and Passkeys on this device)
+      step.value = 'methods';
+    }
+  } catch (err) {
+    console.error('Error fetching auth methods:', err);
+    if (err.name === 'UserNotFoundException' || err.message?.includes('not found')) {
+      error.value = 'No account found with this email. Please sign up.';
+    } else {
+      error.value = 'Could not fetch authentication methods. Please try again later.';
+    }
+  } finally {
+    loading.value = false;
+  }
+}
+
+function selectMethod(method) {
+  selectedMethod.value = method;
+  step.value = 'auth';
+}
 
 async function handleUnconfirmed(emailValue) {
   if (!emailValue) {
@@ -48,9 +108,22 @@ async function handleUnconfirmed(emailValue) {
   }
 }
 
+function back() {
+  if (step.value === 'auth') {
+    const activeMethods = Object.keys(supportedMethods.value).filter(k => supportedMethods.value[k]);
+    if (activeMethods.length > 1) {
+      step.value = 'methods';
+    } else {
+      step.value = 'email';
+    }
+  } else if (step.value === 'methods') {
+    step.value = 'email';
+  }
+}
+
 async function login() {
-  if (!email.value || !password.value) {
-    error.value = 'Email and password are required.';
+  if (selectedMethod.value === 'password' && !password.value) {
+    error.value = 'Password is required.';
     return;
   }
 
@@ -61,8 +134,19 @@ async function login() {
   try {
     console.log('--- Login Attempt Start ---');
     console.log('Email:', email.value);
+    console.log('Method:', selectedMethod.value);
     
-    const { isSignedIn, nextStep } = await handleSignIn(email.value, password.value);
+    let result;
+    if (selectedMethod.value === 'password') {
+      result = await handleSignIn(email.value, password.value);
+    } else {
+      // Placeholder for other methods like OTP, Passkeys etc.
+      error.value = `Authentication method '${selectedMethod.value}' is not yet implemented in this demo. Please use password.`;
+      loading.value = false;
+      return;
+    }
+    
+    const { isSignedIn, nextStep } = result;
     console.log('Login successful? ', isSignedIn);
     console.log('Next step:', nextStep);
     
@@ -78,14 +162,10 @@ async function login() {
   } catch (err) {
     console.error('--- Login Attempt Error ---');
     console.error('Full Error Object:', err);
-    console.error('Error Name:', err.name);
-    console.error('Error Code:', err.code);
-    console.error('Error Message:', err.message);
     
     const errorName = err.name || err.code || '';
     const errorMessage = err.message || '';
     
-    // Check for unconfirmed status by name OR by message content
     if (errorName === 'UserNotConfirmedException' || errorMessage.toLowerCase().includes('confirm') || errorMessage.toLowerCase().includes('verify')) {
       console.log('Detected unconfirmed account via error catch');
       await handleUnconfirmed(email.value);
@@ -116,30 +196,66 @@ function goToVerification() {
     <div v-if="route.query.redirect" class="info-message">
       Please login or signup to access the requested page.
     </div>
-    <form @submit.prevent="login" class="auth-form">
+
+    <!-- Step 1: Email -->
+    <form v-if="step === 'email'" @submit.prevent="nextStep" class="auth-form">
       <div class="form-group">
         <label for="email">Email</label>
-        <input type="email" id="email" v-model="email" required />
+        <input type="email" id="email" v-model="email" required placeholder="Enter your email" />
       </div>
-      <div class="form-group">
+      <div v-if="error" class="error-message">{{ error }}</div>
+      <button type="submit" :disabled="loading" class="auth-button">
+        {{ loading ? 'Checking...' : 'Next' }}
+      </button>
+    </form>
+
+    <!-- Step 2: Choose Method -->
+    <div v-else-if="step === 'methods'" class="auth-form">
+      <p>Choose your authentication method for <strong>{{ email }}</strong>:</p>
+      <div class="method-list">
+        <button v-if="supportedMethods.password" @click="selectMethod('password')" class="method-button">
+          Use Password
+        </button>
+        <button v-if="supportedMethods.passkeys" @click="selectMethod('passkeys')" class="method-button">
+          Passkey (Biometric)
+        </button>
+      </div>
+      <button @click="back" class="back-button">Back</button>
+    </div>
+
+    <!-- Step 3: Authenticate -->
+    <form v-else-if="step === 'auth'" @submit.prevent="login" class="auth-form">
+      <p>Authenticating for <strong>{{ email }}</strong></p>
+      
+      <div v-if="selectedMethod === 'password'" class="form-group">
         <label for="password">Password</label>
-        <input type="password" id="password" v-model="password" required />
+        <input type="password" id="password" v-model="password" required placeholder="Enter your password" />
       </div>
+
+      <div v-else-if="selectedMethod === 'passkeys'" class="form-group">
+        <p class="info-text">Please use your device's biometric or security key to sign in.</p>
+      </div>
+
       <div v-if="error" class="error-message">
         {{ error }}
         <div v-if="isUnconfirmed" class="action-link" @click="goToVerification">
           Click here to verify your account
         </div>
       </div>
-      <button type="submit" :disabled="loading" class="auth-button">
-        {{ loading ? 'Logging in...' : 'Login' }}
-      </button>
+
+      <div class="button-group">
+        <button type="submit" :disabled="loading" class="auth-button">
+          {{ loading ? 'Authenticating...' : (selectedMethod === 'passkeys' ? 'Sign in with Passkey' : 'Login') }}
+        </button>
+        <button type="button" @click="back" class="back-button">Back</button>
+      </div>
     </form>
-    <p class="auth-link">
-      <router-link to="/forgot-password">Forgot Password?</router-link>
+
+    <p v-if="step === 'email'" class="auth-link">
+      <router-link :to="{ path: '/forgot-password', query: { email: email } }">Forgot Password?</router-link>
     </p>
     <p class="auth-link">
-      Don't have an account? <router-link :to="{ name: 'signup', query: route.query }">Signup</router-link>
+      Don't have an account? <router-link :to="{ name: 'signup', query: { ...route.query, email: email } }">Signup</router-link>
     </p>
   </div>
 </template>
@@ -205,6 +321,51 @@ function goToVerification() {
   border-radius: 4px;
   cursor: pointer;
   font-weight: 600;
+  transition: opacity 0.2s;
+}
+
+.method-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.method-button {
+  padding: 0.75rem;
+  border: 1px solid var(--vt-c-green-1);
+  border-radius: 4px;
+  background-color: transparent;
+  color: var(--vt-c-green-1);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.method-button:hover {
+  background-color: var(--vt-c-green-1);
+  color: white;
+}
+
+.back-button {
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background-color: transparent;
+  color: var(--color-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.help-text {
+  font-size: 0.75rem;
+  color: var(--color-text-light);
+  margin-top: 0.25rem;
 }
 
 .auth-button:disabled {

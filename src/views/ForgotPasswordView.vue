@@ -1,6 +1,6 @@
 <script setup>
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, onMounted } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { handleForgotPassword } from '../services/auth';
 
 const email = ref('');
@@ -8,6 +8,13 @@ const error = ref('');
 const success = ref('');
 const loading = ref(false);
 const router = useRouter();
+const route = useRoute();
+
+onMounted(() => {
+  if (route.query.email) {
+    email.value = route.query.email;
+  }
+});
 
 async function forgotPassword() {
   loading.value = true;
@@ -58,7 +65,7 @@ async function forgotPassword() {
       </button>
     </form>
     <p class="auth-link">
-      Remembered your password? <router-link to="/login">Login</router-link>
+      Remembered your password? <router-link :to="{ path: '/login', query: { email: email } }">Login</router-link>
     </p>
   </div>
 </template>

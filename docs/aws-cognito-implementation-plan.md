@@ -98,6 +98,26 @@ No code changes are required in the app for this section; it is all in AWS Conso
 4. **Auth views and flows**
    - Rely on Authenticator for: sign-up, sign-in, confirm sign-up (email/phone code), forgot password, confirm forgot password, and MFA (TOTP setup and challenge; SMS/Email if enabled in user pool).
    - Optional: dedicated routes (e.g. `/login`, `/signup`, `/forgot-password`) that render the Authenticator in a specific initial state for better deep-linking.
+
+---
+
+## 5. Modified Login Flow (Multi-Step)
+
+The login flow has been enhanced to support multiple authentication methods based on user configuration in DynamoDB:
+
+1.  **Email Step**: User enters their email.
+2.  **Auth Method Discovery**: The system calls a custom API (`/auth-methods`) which queries DynamoDB to find the user's supported authentication methods.
+3.  **Method Selection**: The user is presented with their available methods (e.g., Password, Email OTP, Mobile OTP, Passkeys, etc.).
+4.  **Authentication**: The user provides the required credentials for the selected method.
+
+### Implementation Details:
+- **Backend**: A new Lambda function `GetAuthMethodsHandler` handles the lookup in the `UserSecurity` DynamoDB table using a Global Secondary Index (GSI) on the `email` attribute.
+- **Frontend**: `LoginView.vue` has been updated to handle these steps using a state machine (`step` ref).
+- **Security**: The `/auth-methods` endpoint is public but only returns the *types* of methods available, not any sensitive data.
+
+---
+
+## 6. Next Steps
 5. **Passkeys (two options)**
    - **Option A – Managed Login:** Add a "Sign in with passkey" (or "Sign in with Cognito") button that redirects to Cognito Hosted UI; after sign-in/setup passkey, Cognito redirects back to your app with tokens. Configure Amplify to use Hosted UI for that flow.
    - **Option B – Custom UI:** Use Cognito APIs plus WebAuthn (or the [amazon-cognito-passwordless-auth](https://github.com/aws-samples/amazon-cognito-passwordless-auth) SDK) to implement passkey registration and authentication in your Vue app; more code and testing.

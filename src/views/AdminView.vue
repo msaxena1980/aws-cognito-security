@@ -1,12 +1,43 @@
 <script setup>
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { authState, handleForgotPassword } from '../services/auth';
+import { authState, handleForgotPassword, handleUpdatePassword } from '../services/auth';
 
 const router = useRouter();
 const loading = ref(false);
-const error = ref(false);
+const error = ref('');
 const success = ref('');
+
+const oldPassword = ref('');
+const newPassword = ref('');
+const confirmPassword = ref('');
+const showUpdateForm = ref(false);
+
+async function updatePassword() {
+  if (newPassword.value !== confirmPassword.value) {
+    error.value = 'New passwords do not match';
+    return;
+  }
+
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await handleUpdatePassword(oldPassword.value, newPassword.value);
+    success.value = 'Password updated successfully! You are still logged in.';
+    oldPassword.value = '';
+    newPassword.value = '';
+    confirmPassword.value = '';
+    setTimeout(() => {
+      showUpdateForm.value = false;
+      success.value = '';
+    }, 3000);
+  } catch (err) {
+    error.value = err.message || 'Failed to update password';
+  } finally {
+    loading.value = false;
+  }
+}
 
 async function initiatePasswordReset() {
   const email = authState.user?.signInDetails?.loginId;
@@ -43,18 +74,36 @@ async function initiatePasswordReset() {
     
     <div class="admin-content">
       <h3>Security Settings</h3>
-      <p>Need to update your security? You can change your password below. A verification code will be sent to your registered email.</p>
+      <p>Need to update your security? You can change your password below.</p>
       
       <div v-if="error" class="error-message">{{ error }}</div>
       <div v-if="success" class="success-message">{{ success }}</div>
       
-      <button 
-        @click="initiatePasswordReset" 
-        :disabled="loading" 
-        class="reset-button"
-      >
-        {{ loading ? 'Sending Code...' : 'Change Password' }}
-      </button>
+      <div v-if="!showUpdateForm">
+        <button @click="showUpdateForm = true" class="action-button">Change Password</button>
+        <p class="helper-text">Forgot your old password? <a href="#" @click.prevent="initiatePasswordReset">Reset via email code</a></p>
+      </div>
+
+      <form v-else @submit.prevent="updatePassword" class="update-form">
+        <div class="form-group">
+          <label for="oldPassword">Current Password</label>
+          <input type="password" id="oldPassword" v-model="oldPassword" required />
+        </div>
+        <div class="form-group">
+          <label for="newPassword">New Password</label>
+          <input type="password" id="newPassword" v-model="newPassword" required />
+        </div>
+        <div class="form-group">
+          <label for="confirmPassword">Confirm New Password</label>
+          <input type="password" id="confirmPassword" v-model="confirmPassword" required />
+        </div>
+        <div class="form-actions">
+          <button type="submit" :disabled="loading" class="submit-button">
+            {{ loading ? 'Updating...' : 'Save New Password' }}
+          </button>
+          <button type="button" @click="showUpdateForm = false" class="cancel-button">Cancel</button>
+        </div>
+      </form>
     </div>
 
   </div>
@@ -94,7 +143,7 @@ li {
   margin-bottom: 0.5rem;
 }
 
-.reset-button {
+.reset-button, .action-button, .submit-button {
   padding: 0.75rem 1.5rem;
   background: var(--vt-c-green-1);
   color: white;
@@ -105,9 +154,56 @@ li {
   transition: opacity 0.2s;
 }
 
-.reset-button:disabled {
+.cancel-button {
+  padding: 0.75rem 1.5rem;
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.reset-button:disabled, .action-button:disabled, .submit-button:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+.update-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 400px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group input {
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-background);
+  color: var(--color-text);
+}
+
+.form-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+.helper-text {
+  margin-top: 1rem;
+  font-size: 0.875rem;
+  color: var(--color-text-light);
+}
+
+.helper-text a {
+  color: var(--vt-c-green-1);
+  text-decoration: underline;
 }
 
 .error-message {

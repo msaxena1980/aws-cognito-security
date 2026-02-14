@@ -96,6 +96,13 @@ export class InfraStack extends cdk.Stack {
        writeCapacity: 5,
      });
 
+    // Add GSI for email lookup
+    table.addGlobalSecondaryIndex({
+      indexName: 'EmailIndex',
+      partitionKey: { name: 'email', type: cdk.aws_dynamodb.AttributeType.STRING },
+      projectionType: cdk.aws_dynamodb.ProjectionType.ALL,
+    });
+
     // 4. Lambda Functions for Cognito Triggers
     const preSignUpLambda = new cdk.aws_lambda.Function(this, 'PreSignUpHandler', {
       runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
@@ -153,7 +160,26 @@ export class InfraStack extends cdk.Stack {
 
     table.grantReadWriteData(helloLambda);
 
-    // 5. API Gateway with Cognito Authorizer
+    // 6. Get Auth Methods Lambda
+    const getAuthMethodsLambda = new cdk.aws_lambda.Function(this, 'GetAuthMethodsHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'getAuthMethods.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+        USER_POOL_ID: userPool.userPoolId,
+      },
+    });
+
+    table.grantReadData(getAuthMethodsLambda);
+    
+    // Grant ListUsers permission to check if user exists in Cognito
+    getAuthMethodsLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['cognito-idp:ListUsers'],
+      resources: [userPool.userPoolArn],
+    }));
+
+    // 7. API Gateway with Cognito Authorizer
     const api = new cdk.aws_apigateway.RestApi(this, 'AuthApi', {
       restApiName: 'Cognito Security Demo API',
       defaultCorsPreflightOptions: {
@@ -170,6 +196,28 @@ export class InfraStack extends cdk.Stack {
     helloResource.addMethod('GET', new cdk.aws_apigateway.LambdaIntegration(helloLambda), {
       authorizer,
       authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+
+    const authMethodsResource = api.root.addResource('auth-methods');
+    authMethodsResource.addMethod('GET', new cdk.aws_apigateway.LambdaIntegration(getAuthMethodsLambda)); // Public endpoint
+
+    // Add Gateway Responses to handle CORS for 4xx and 5xx errors
+    api.addGatewayResponse('Default4xxResponse', {
+      type: cdk.aws_apigateway.ResponseType.DEFAULT_4XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': "'*'",
+        'Access-Control-Allow-Headers': "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+        'Access-Control-Allow-Methods': "'GET,POST,OPTIONS'",
+      },
+    });
+
+    api.addGatewayResponse('Default5xxResponse', {
+      type: cdk.aws_apigateway.ResponseType.DEFAULT_5XX,
+      responseHeaders: {
+        'Access-Control-Allow-Origin': "'*'",
+        'Access-Control-Allow-Headers': "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+        'Access-Control-Allow-Methods': "'GET,POST,OPTIONS'",
+      },
     });
 
     new cdk.CfnOutput(this, 'ApiUrl', {

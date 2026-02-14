@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { handleResetPassword } from '../services/auth';
+import { handleResetPassword, handleSignIn } from '../services/auth';
 
 const email = ref('');
 const code = ref('');
@@ -30,10 +30,24 @@ async function resetPassword() {
   success.value = '';
   try {
     await handleResetPassword(email.value, code.value, newPassword.value);
-    success.value = 'Password reset successfully! Redirecting to login...';
-    setTimeout(() => {
-      router.push('/login');
-    }, 2000);
+    success.value = 'Password reset successfully! Logging you in...';
+    
+    try {
+      // Automatically log the user in with the new password
+      await handleSignIn(email.value, newPassword.value);
+      setTimeout(() => {
+        router.push('/admin');
+      }, 2000);
+    } catch (loginErr) {
+      console.error('Auto-login failed after password reset:', loginErr);
+      success.value = 'Password reset successfully! Please log in with your new password.';
+      setTimeout(() => {
+        router.push({
+          path: '/login',
+          query: { email: email.value }
+        });
+      }, 2000);
+    }
   } catch (err) {
     error.value = err.message || 'Failed to reset password';
   } finally {

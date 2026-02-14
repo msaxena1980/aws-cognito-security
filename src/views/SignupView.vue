@@ -10,6 +10,14 @@ const loading = ref(false);
 const router = useRouter();
 const route = useRoute();
 
+import { onMounted } from 'vue';
+
+onMounted(() => {
+  if (route.query.email) {
+    email.value = route.query.email;
+  }
+});
+
 async function signup() {
   loading.value = true;
   error.value = '';
@@ -56,7 +64,7 @@ async function signup() {
       </button>
     </form>
     <p class="auth-link">
-      Already have an account? <router-link :to="{ name: 'login', query: route.query }">Login</router-link>
+      Already have an account? <router-link :to="{ name: 'login', query: { ...route.query, email: email } }">Login</router-link>
     </p>
   </div>
 </template>

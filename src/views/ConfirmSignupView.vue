@@ -31,7 +31,10 @@ async function confirm() {
   try {
     const { isSignUpComplete } = await handleConfirmSignUp(email.value, code.value);
     if (isSignUpComplete) {
-      router.push('/login');
+      router.push({
+        path: '/login',
+        query: { email: email.value }
+      });
     }
   } catch (err) {
     error.value = err.message || 'Failed to confirm account';

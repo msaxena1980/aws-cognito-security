@@ -22,6 +22,7 @@ export const handler = async (event) => {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         authMethods: {
+            password: true,
             emailOtp: true,
             mobileOtp: false,
             mfa: false,
