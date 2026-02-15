@@ -1,10 +1,11 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp, handleSignIn } from '../services/auth';
+import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp, handleSignIn, getMfaStatus, startTotpSetup, completeTotpSetup, disableTotpMfa } from '../services/auth';
 import { getProfile, updateProfile, startPhoneChange, verifyPhoneOld, verifyPhoneNew, startEmailChange, verifyEmailOld, verifyEmailNew } from '../services/profile';
 import { getVaultMetadata, createEncryptedVaultPackage, saveVaultPackage, changePassphrase as rewrapPassphrase, generatePassphrase, saveEncryptedPassphrase, getPassphraseStatus, verifyPassphrase } from '../services/vault';
 import { completeAccountDeletion, startDeleteOtp, verifyDeleteOtp } from '../services/account';
+import QRCode from 'qrcode';
 
 const router = useRouter();
 const loading = ref(false);
@@ -33,12 +34,23 @@ const profileName = ref('');
 const profileEmail = ref('');
 const profilePhone = ref('');
 const originalProfileName = ref('');
+const hasTwoFAProfile = ref(false);
+const hasPasskey = ref(false);
+const hasVaultProfile = ref(false);
 const phoneOtpSent = ref(false);
 const phoneOtpCode = ref('');
 const emailOtpSent = ref(false);
 const emailOtpCode = ref('');
 const userId = computed(() => authState.user?.userId || '');
 const currentEmail = computed(() => authState.user?.signInDetails?.loginId || profileEmail.value || '');
+
+const isTwoFAEnabled = ref(false);
+const showTwoFAModal = ref(false);
+const twoFAStep = ref('intro');
+const totpSecret = ref('');
+const totpUri = ref('');
+const totpQrDataUrl = ref('');
+const totpCodeInput = ref('');
 
 // Email change flow
 const showEmailChangeModal = ref(false);
@@ -70,6 +82,12 @@ onMounted(async () => {
       originalProfileName.value = profileName.value;
       profileEmail.value = prof.email || authState.user?.signInDetails?.loginId || '';
       profilePhone.value = prof.phone || '';
+      hasTwoFAProfile.value = !!prof.twoFAEnabled;
+      hasPasskey.value = !!prof.passkeyEnabled;
+      hasVaultProfile.value = !!prof.vaultEnabled;
+      if (hasTwoFAProfile.value) {
+        isTwoFAEnabled.value = true;
+      }
     } catch (e) {
       console.warn('Profile fetch failed:', e);
     }
@@ -77,6 +95,31 @@ onMounted(async () => {
     vaultExists.value = !!meta.exists;
     const status = await getPassphraseStatus();
     passphraseStored.value = !!status.stored;
+    if (vaultExists.value && passphraseStored.value) {
+      hasVaultProfile.value = true;
+    }
+    try {
+      const mfa = await getMfaStatus();
+      const hasTotp = !!mfa.hasTotp;
+      if (hasTotp) {
+        isTwoFAEnabled.value = true;
+        if (!hasTwoFAProfile.value) {
+          hasTwoFAProfile.value = true;
+          try {
+            await updateProfile({
+              name: profileName.value,
+              email: profileEmail.value,
+              phone: profilePhone.value,
+              twoFAEnabled: true
+            });
+          } catch (profileErr) {
+            console.warn('Failed to persist 2FA status from MFA check:', profileErr);
+          }
+        }
+      }
+    } catch (mfaErr) {
+      console.warn('MFA status fetch failed:', mfaErr);
+    }
   } catch (e) {
     vaultExists.value = false;
     passphraseStored.value = false;
@@ -119,7 +162,7 @@ function openPhoneChange() {
 async function setPhoneAndSendOtp() {
   const e164 = /^\+[1-9]\d{1,14}$/;
   if (!e164.test((newPhoneInput.value || '').trim())) {
-    error.value = 'Enter a valid mobile number in E.164 format, e.g., +14155550123';
+    error.value = 'Enter a valid mobile number e.g., +14155550123';
     return;
   }
   loading.value = true;
@@ -264,6 +307,17 @@ async function setupPassphrase() {
     success.value = 'Secure vault created and saved.';
     vaultExists.value = true;
     passphraseStored.value = true;
+    hasVaultProfile.value = true;
+    try {
+      await updateProfile({
+        name: profileName.value,
+        email: profileEmail.value,
+        phone: profilePhone.value,
+        vaultEnabled: true
+      });
+    } catch (profileErr) {
+      console.warn('Failed to persist vault status to profile:', profileErr);
+    }
     passphraseSetting.value = false;
     showPassphraseModal.value = false;
     passphrase.value = '';
@@ -743,11 +797,126 @@ function copyUserId(text) {
 }
 
 function enable2FA() {
-  success.value = '2FA setup coming soon.';
+  error.value = '';
+  success.value = '';
+  totpSecret.value = '';
+  totpUri.value = '';
+  totpCodeInput.value = '';
+  if (!isTwoFAEnabled.value) {
+    twoFAStep.value = 'intro';
+    showTwoFAModal.value = true;
+  } else {
+    twoFAStep.value = 'disable-confirm';
+    showTwoFAModal.value = true;
+  }
 }
 
-function registerPasskey() {
-  success.value = 'Passkey registration coming soon.';
+async function beginTotpSetupFlow() {
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    const { secret, uri } = await startTotpSetup();
+    totpSecret.value = secret;
+    totpUri.value = uri;
+    try {
+      totpQrDataUrl.value = await QRCode.toDataURL(uri, { margin: 1, width: 192 });
+    } catch (qrErr) {
+      console.warn('QR code generation failed:', qrErr);
+      totpQrDataUrl.value = '';
+    }
+    twoFAStep.value = 'show';
+  } catch (e) {
+    error.value = e.message || 'Failed to start 2FA setup';
+  } finally {
+    loading.value = false;
+  }
+}
+
+function goToVerifyTotp() {
+  twoFAStep.value = 'verify';
+}
+
+async function confirmTotpSetup() {
+  const code = (totpCodeInput.value || '').trim();
+  if (!code) {
+    error.value = 'Enter the code from your authenticator app';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await completeTotpSetup(code);
+    isTwoFAEnabled.value = true;
+    hasTwoFAProfile.value = true;
+    try {
+      await updateProfile({
+        name: profileName.value,
+        email: profileEmail.value,
+        phone: profilePhone.value,
+        twoFAEnabled: true
+      });
+    } catch (profileErr) {
+      console.warn('Failed to persist 2FA status to profile:', profileErr);
+    }
+    success.value = 'Two-factor authentication enabled.';
+    showTwoFAModal.value = false;
+  } catch (e) {
+    error.value = e.message || 'Failed to verify code';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function confirmDisableTwoFA() {
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await disableTotpMfa();
+    isTwoFAEnabled.value = false;
+    hasTwoFAProfile.value = false;
+    try {
+      await updateProfile({
+        name: profileName.value,
+        email: profileEmail.value,
+        phone: profilePhone.value,
+        twoFAEnabled: false
+      });
+    } catch (profileErr) {
+      console.warn('Failed to persist 2FA disabled status to profile:', profileErr);
+    }
+    success.value = 'Two-factor authentication disabled.';
+    showTwoFAModal.value = false;
+  } catch (e) {
+    error.value = e.message || 'Failed to disable 2FA';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function registerPasskey() {
+  error.value = '';
+  success.value = '';
+  loading.value = true;
+  try {
+    const nextValue = !hasPasskey.value;
+    await updateProfile({
+      name: profileName.value,
+      email: profileEmail.value,
+      phone: profilePhone.value,
+      passkeyEnabled: nextValue
+    });
+    hasPasskey.value = nextValue;
+    success.value = nextValue
+      ? 'Passkey preference saved. Registration flow coming soon.'
+      : 'Passkey preference removed.';
+  } catch (e) {
+    error.value = e.message || 'Failed to update passkey preference';
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 
@@ -811,7 +980,7 @@ function registerPasskey() {
             <div class="feature-title">Authenticator App</div>
             <div class="feature-sub">Enabled multi factor security on your account</div>
           </div>
-          <button class="primary-button" @click="enable2FA">Enable 2FA</button>
+          <button class="primary-button" @click="enable2FA">{{ (isTwoFAEnabled || hasTwoFAProfile) ? 'Disable 2FA' : 'Enable 2FA' }}</button>
         </div>
       </section>
 
@@ -821,7 +990,7 @@ function registerPasskey() {
             <div class="feature-title">Passkeys</div>
             <div class="feature-sub">Consider registering a passkey on your account</div>
           </div>
-          <button class="primary-button" @click="registerPasskey">Add Passkey</button>
+          <button class="primary-button" @click="registerPasskey">{{ hasPasskey ? 'Change Passkey' : 'Add Passkey' }}</button>
         </div>
       </section>
 
@@ -837,10 +1006,10 @@ function registerPasskey() {
       <section class="security-section" v-if="vaultExists && passphraseStored">
         <div class="feature-card">
           <div class="feature-info">
-            <div class="feature-title">Passphrase</div>
-            <div class="feature-sub">Change your 9-word passphrase</div>
+            <div class="feature-title">Secure Vault</div>
+            <div class="feature-sub">Change your vault passphrase</div>
           </div>
-        <button class="primary-button" @click="startChangePassphrase">Change Passphrase</button>
+        <button class="primary-button" @click="startChangePassphrase">Change Vault</button>
         </div>
       </section>
       <section class="security-section">
@@ -1037,6 +1206,132 @@ function registerPasskey() {
           <div class="modal-actions">
             <button class="secondary-button" @click="showPhoneChangeModal=false">Cancel</button>
             <button class="primary-button" @click="verifyNewPhoneCode">Verify New Mobile & Update</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div v-if="showTwoFAModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span v-if="twoFAStep === 'intro' && !isTwoFAEnabled">Enable 2FA</span>
+          <span v-else-if="twoFAStep === 'show'">Set up authenticator app</span>
+          <span v-else-if="twoFAStep === 'verify'">Verify 2FA code</span>
+          <span v-else-if="twoFAStep === 'disable-confirm'">Disable 2FA</span>
+          <span v-else>Verify email</span>
+        </div>
+        <button class="modal-close" @click="showTwoFAModal = false">×</button>
+      </div>
+      <div class="modal-body">
+        <div v-if="twoFAStep === 'intro'">
+          <div class="callout">
+            <div class="callout-title">Use an authenticator app</div>
+            <div class="callout-text">
+              Step 1: Download and install an authenticator app such as Google Authenticator or Microsoft Authenticator on your phone.
+            </div>
+          </div>
+          <div class="auth-app-grid">
+            <div class="auth-app-card">
+              <div class="auth-app-name">Google Authenticator</div>
+              <div class="auth-app-stores">
+                <a
+                  class="store-button"
+                  href="https://apps.apple.com/app/google-authenticator/id388497605"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  App Store
+                </a>
+                <a
+                  class="store-button"
+                  href="https://play.google.com/store/apps/details?id=com.google.android.apps.authenticator2"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Google Play
+                </a>
+              </div>
+            </div>
+            <div class="auth-app-card">
+              <div class="auth-app-name">Microsoft Authenticator</div>
+              <div class="auth-app-stores">
+                <a
+                  class="store-button"
+                  href="https://apps.apple.com/app/microsoft-authenticator/id983156458"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  App Store
+                </a>
+                <a
+                  class="store-button"
+                  href="https://play.google.com/store/apps/details?id=com.azure.authenticator"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Google Play
+                </a>
+              </div>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="beginTotpSetupFlow">{{ loading ? 'Starting...' : 'Continue' }}</button>
+          </div>
+        </div>
+        <div v-else-if="twoFAStep === 'show'">
+          <div class="callout-title">Connect your authenticator</div>
+          <div class="callout-text">
+            Add a new account in your authenticator app by scanning the QR code or entering the key below.
+          </div>
+          <div v-if="totpQrDataUrl" class="form-group">
+            <label>Scan this QR code</label>
+            <div class="qr-wrapper">
+              <img :src="totpQrDataUrl" alt="Authenticator QR code" class="qr-image" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Account</label>
+            <div class="id-value">{{ currentEmail }}</div>
+          </div>
+          <div class="form-group">
+            <label>Secret key</label>
+            <div class="id-row">
+              <div class="id-value">{{ totpSecret }}</div>
+              <button type="button" class="secondary-button" @click="copyToClipboard(totpSecret, '2FA key')" :disabled="!totpSecret">Copy</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Setup link (otpauth)</label>
+            <div class="id-row">
+              <div class="id-value">{{ totpUri }}</div>
+              <button type="button" class="secondary-button" @click="copyToClipboard(totpUri, 'Setup link')" :disabled="!totpUri">Copy</button>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
+            <button class="primary-button" @click="goToVerifyTotp">Continue</button>
+          </div>
+        </div>
+        <div v-else-if="twoFAStep === 'verify'">
+          <div class="form-group">
+            <label for="totpCode">Code from authenticator</label>
+            <input id="totpCode" type="text" v-model="totpCodeInput" placeholder="123456" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="confirmTotpSetup">{{ loading ? 'Verifying...' : 'Enable 2FA' }}</button>
+          </div>
+        </div>
+        <div v-else-if="twoFAStep === 'disable-confirm'">
+          <div class="callout-title">Disable two-factor authentication</div>
+          <div class="callout-text">
+            Disabling 2FA reduces the security of your account. You can re-enable it at any time.
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="confirmDisableTwoFA">{{ loading ? 'Disabling...' : 'Disable 2FA' }}</button>
           </div>
         </div>
       </div>
@@ -1438,6 +1733,51 @@ li {
 }
 .callout-text {
   opacity: .9;
+}
+.auth-app-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.auth-app-card {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.auth-app-name {
+  font-weight: 700;
+}
+.auth-app-stores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.store-button {
+  padding: 0.4rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: #111827;
+  color: #f9fafb;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.qr-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 0.75rem 0;
+}
+.qr-image {
+  width: 192px;
+  height: 192px;
+  image-rendering: pixelated;
 }
 .word-chip-row {
   display: flex;

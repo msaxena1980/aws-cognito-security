@@ -26,9 +26,9 @@ export class InfraStack extends cdk.Stack {
         email: true,
       },
       mfa: cdk.aws_cognito.Mfa.OPTIONAL,
-      mfaMethods: {
+      mfaSecondFactor: {
         sms: false, // disable SMS in sandbox
-        totp: true,
+        otp: true,
       },
       passwordPolicy: {
         minLength: 8,

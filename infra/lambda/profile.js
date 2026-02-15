@@ -43,6 +43,9 @@ export const handler = async (event) => {
             name: claims.name || "",
             email: claims.email || "",
             phone: claims.phone_number || "",
+            twoFAEnabled: false,
+            passkeyEnabled: false,
+            vaultEnabled: false,
             updatedAt: null,
             createdAt: null
           })
@@ -56,6 +59,9 @@ export const handler = async (event) => {
           name: resp.Item.name || "",
           email: resp.Item.email || "",
           phone: resp.Item.phone || "",
+          twoFAEnabled: !!resp.Item.twoFAEnabled,
+          passkeyEnabled: !!resp.Item.passkeyEnabled,
+          vaultEnabled: !!resp.Item.vaultEnabled,
           updatedAt: resp.Item.updatedAt || null,
           createdAt: resp.Item.createdAt || null
         })
@@ -72,19 +78,31 @@ export const handler = async (event) => {
       } catch {
         return { statusCode: 400, headers: CORS, body: JSON.stringify({ message: "Invalid JSON" }) };
       }
-      const name = (payload?.name || "").toString();
-      const email = (payload?.email || "").toString();
-      const phone = (payload?.phone || "").toString();
+      const name = payload?.name;
+      const email = payload?.email;
+      const phone = payload?.phone;
+      const twoFAEnabled = payload?.twoFAEnabled;
+      const passkeyEnabled = payload?.passkeyEnabled;
+      const vaultEnabled = payload?.vaultEnabled;
+
+      const existingResp = await doc.send(new GetCommand({
+        TableName: tableName,
+        Key: { pk, sk }
+      }));
+      const existing = existingResp.Item || {};
 
       const now = new Date().toISOString();
       const item = {
         pk,
         sk,
-        name,
-        email,
-        phone,
+        name: name !== undefined ? String(name) : (existing.name || ""),
+        email: email !== undefined ? String(email) : (existing.email || ""),
+        phone: phone !== undefined ? String(phone) : (existing.phone || ""),
+        twoFAEnabled: twoFAEnabled !== undefined ? !!twoFAEnabled : !!existing.twoFAEnabled,
+        passkeyEnabled: passkeyEnabled !== undefined ? !!passkeyEnabled : !!existing.passkeyEnabled,
+        vaultEnabled: vaultEnabled !== undefined ? !!vaultEnabled : !!existing.vaultEnabled,
         updatedAt: now,
-        createdAt: now
+        createdAt: existing.createdAt || now
       };
 
       await doc.send(new PutCommand({

@@ -31,14 +31,21 @@ export async function getProfile() {
   return body;
 }
 
-export async function updateProfile({ name, email, phone }) {
+export async function updateProfile({ name, email, phone, twoFAEnabled, passkeyEnabled, vaultEnabled }) {
   const op = put({
     apiName: 'AuthApi',
     path: '/profile',
     options: {
       authMode: 'userPool',
       headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
-      body: { name, email, phone }
+      body: {
+        ...(name !== undefined ? { name } : {}),
+        ...(email !== undefined ? { email } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+        ...(twoFAEnabled !== undefined ? { twoFAEnabled: !!twoFAEnabled } : {}),
+        ...(passkeyEnabled !== undefined ? { passkeyEnabled: !!passkeyEnabled } : {}),
+        ...(vaultEnabled !== undefined ? { vaultEnabled: !!vaultEnabled } : {})
+      }
     }
   });
   const res = await op.response;

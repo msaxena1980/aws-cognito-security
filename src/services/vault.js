@@ -132,23 +132,32 @@ export async function saveVaultPackage(pkg) {
 }
 
 export async function getVaultMetadata() {
-  const op = get({
-    apiName: 'AuthApi',
-    path: '/vault',
-    options: {
-      authMode: 'userPool',
-      headers: await authHeaders()
+  try {
+    const op = get({
+      apiName: 'AuthApi',
+      path: '/vault',
+      options: {
+        authMode: 'userPool',
+        headers: await authHeaders()
+      }
+    });
+    const res = await op.response;
+    if (res.statusCode === 404) {
+      return { exists: false };
     }
-  });
-  const res = await op.response;
-  if (res.statusCode === 404) {
+    if (res.statusCode >= 300) {
+      const body = await res.body.text();
+      throw new Error(`Vault metadata failed: ${res.statusCode} ${body}`);
+    }
+    return res.body.json();
+  } catch (error) {
+    const status = error?.response?.statusCode;
+    if (status === 404) {
+      return { exists: false };
+    }
+    console.error('Error in getVaultMetadata:', error);
     return { exists: false };
   }
-  if (res.statusCode >= 300) {
-    const body = await res.body.text();
-    throw new Error(`Vault metadata failed: ${res.statusCode} ${body}`);
-  }
-  return res.body.json();
 }
 
 export async function getVaultPackageFull() {

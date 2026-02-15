@@ -1,7 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { handleSignIn, handleResendSignUpCode, getAuthMethods } from '../services/auth';
+import { handleSignIn, handleResendSignUpCode, getAuthMethods, handleConfirmMfa } from '../services/auth';
+import { updateProfile } from '../services/profile';
 
 const email = ref('');
 const password = ref('');
@@ -15,6 +16,7 @@ const step = ref('email'); // 'email', 'methods', 'auth'
 const supportedMethods = ref({});
 const selectedMethod = ref('');
 const isUnconfirmed = ref(false);
+const needsMfa = ref(false);
 
 onMounted(() => {
   if (route.query.email) {
@@ -122,8 +124,13 @@ function back() {
 }
 
 async function login() {
-  if (selectedMethod.value === 'password' && !password.value) {
+  if (!needsMfa.value && selectedMethod.value === 'password' && !password.value) {
     error.value = 'Password is required.';
+    return;
+  }
+
+  if (needsMfa.value && !otpCode.value) {
+    error.value = 'Enter the code from your authenticator app.';
     return;
   }
 
@@ -136,17 +143,33 @@ async function login() {
     console.log('Email:', email.value);
     console.log('Method:', selectedMethod.value);
     
-    let result;
-    if (selectedMethod.value === 'password') {
-      result = await handleSignIn(email.value, password.value);
+    let isSignedIn = false;
+    let nextStep;
+
+    if (needsMfa.value) {
+      const result = await handleConfirmMfa(otpCode.value);
+      isSignedIn = result.isSignedIn;
+      nextStep = result.nextStep;
+      if (isSignedIn) {
+        try {
+          await updateProfile({ twoFAEnabled: true });
+        } catch (e) {
+          console.warn('Failed to persist 2FA flag from login:', e);
+        }
+      }
     } else {
-      // Placeholder for other methods like OTP, Passkeys etc.
-      error.value = `Authentication method '${selectedMethod.value}' is not yet implemented in this demo. Please use password.`;
-      loading.value = false;
-      return;
+      let result;
+      if (selectedMethod.value === 'password') {
+        result = await handleSignIn(email.value, password.value);
+      } else {
+        error.value = `Authentication method '${selectedMethod.value}' is not yet implemented in this demo. Please use password.`;
+        loading.value = false;
+        return;
+      }
+      isSignedIn = result.isSignedIn;
+      nextStep = result.nextStep;
     }
     
-    const { isSignedIn, nextStep } = result;
     console.log('Login successful? ', isSignedIn);
     console.log('Next step:', nextStep);
     
@@ -156,6 +179,9 @@ async function login() {
     } else if (nextStep && nextStep.signInStep === 'CONFIRM_SIGN_UP') {
       console.log('Detected unconfirmed account via nextStep');
       await handleUnconfirmed(email.value);
+    } else if (nextStep && nextStep.signInStep === 'CONFIRM_SIGN_IN_WITH_TOTP_CODE') {
+      needsMfa.value = true;
+      error.value = '';
     } else {
       error.value = 'Login successful but further action required: ' + (nextStep?.signInStep || 'Unknown step');
     }
@@ -170,9 +196,11 @@ async function login() {
       console.log('Detected unconfirmed account via error catch');
       await handleUnconfirmed(email.value);
     } else if (errorName === 'NotAuthorizedException') {
-      error.value = 'Incorrect email or password.';
+      error.value = needsMfa.value ? 'Invalid authentication code. Please try again.' : 'Incorrect email or password.';
     } else if (errorName === 'UserNotFoundException') {
       error.value = 'No account found with this email.';
+    } else if (errorName === 'CodeMismatchException') {
+      error.value = 'Invalid authentication code. Please try again.';
     } else {
       error.value = `Login failed: ${errorMessage} (${errorName})`;
     }
@@ -232,6 +260,11 @@ function goToVerification() {
         <input type="password" id="password" v-model="password" required placeholder="Enter your password" />
       </div>
 
+      <div v-if="selectedMethod === 'password' && needsMfa" class="form-group">
+        <label for="otp">Authenticator code</label>
+        <input id="otp" type="text" v-model="otpCode" placeholder="123456" />
+      </div>
+
       <div v-else-if="selectedMethod === 'passkeys'" class="form-group">
         <p class="info-text">Please use your device's biometric or security key to sign in.</p>
       </div>
@@ -245,7 +278,13 @@ function goToVerification() {
 
       <div class="button-group">
         <button type="submit" :disabled="loading" class="auth-button">
-          {{ loading ? 'Authenticating...' : (selectedMethod === 'passkeys' ? 'Sign in with Passkey' : 'Login') }}
+          {{
+            loading
+              ? (needsMfa ? 'Verifying...' : 'Authenticating...')
+              : (selectedMethod === 'passkeys'
+                  ? 'Sign in with Passkey'
+                  : (needsMfa ? 'Verify & Login' : 'Login'))
+          }}
         </button>
         <button type="button" @click="back" class="back-button">Back</button>
       </div>

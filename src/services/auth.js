@@ -1,4 +1,4 @@
-import { signUp, confirmSignUp, resendSignUpCode, signIn, signOut, getCurrentUser, fetchAuthSession, resetPassword, confirmResetPassword, updatePassword, updateUserAttributes, sendUserAttributeVerificationCode, confirmUserAttribute } from 'aws-amplify/auth';
+import { signUp, confirmSignUp, resendSignUpCode, signIn, signOut, getCurrentUser, fetchAuthSession, resetPassword, confirmResetPassword, updatePassword, updateUserAttributes, sendUserAttributeVerificationCode, confirmUserAttribute, fetchMFAPreference, setUpTOTP, verifyTOTPSetup, updateMFAPreference, confirmSignIn } from 'aws-amplify/auth';
 import { get } from 'aws-amplify/api';
 import { reactive } from 'vue';
 
@@ -162,6 +162,26 @@ export async function handleSignIn(email, password) {
     }
 }
 
+export async function handleConfirmMfa(code) {
+    try {
+        const { isSignedIn, nextStep } = await confirmSignIn({
+            challengeResponse: code
+        });
+        if (isSignedIn) {
+            await checkAuth();
+        }
+        return { isSignedIn, nextStep };
+    } catch (error) {
+        console.error('Error confirming MFA:', {
+            name: error.name,
+            message: error.message,
+            recoverySuggestion: error.recoverySuggestion,
+            underlyingError: error
+        });
+        throw error;
+    }
+}
+
 export async function handleSignOut() {
     try {
         await signOut();
@@ -264,6 +284,60 @@ export async function confirmEmailOtp(code) {
         await checkAuth();
     } catch (error) {
         console.error('Error confirming email OTP:', error);
+        throw error;
+    }
+}
+
+export async function getMfaStatus() {
+    try {
+        const { enabled, preferred } = await fetchMFAPreference();
+        const totpStatus = (enabled && enabled.totp) || (preferred && preferred.totp);
+        const hasTotp = totpStatus === 'ENABLED' || totpStatus === 'PREFERRED';
+        return { hasTotp, enabled, preferred };
+    } catch (error) {
+        console.error('Error fetching MFA status:', error);
+        return { hasTotp: false };
+    }
+}
+
+export async function startTotpSetup() {
+    try {
+        const details = await setUpTOTP();
+        const secret = details.sharedSecret;
+        let label = 'user';
+        try {
+            const user = await getCurrentUser();
+            label = user?.signInDetails?.loginId || user?.username || label;
+        } catch {}
+        const issuer = 'AWS Cognito Security';
+        const encodedIssuer = encodeURIComponent(issuer);
+        const encodedLabel = encodeURIComponent(label);
+        const encodedSecret = encodeURIComponent(secret);
+        const uri = `otpauth://totp/${encodedIssuer}:${encodedLabel}?secret=${encodedSecret}&issuer=${encodedIssuer}`;
+        return { secret, uri };
+    } catch (error) {
+        console.error('Error starting TOTP setup:', error);
+        throw error;
+    }
+}
+
+export async function completeTotpSetup(code) {
+    try {
+        await verifyTOTPSetup({ code });
+        await updateMFAPreference({ totp: 'PREFERRED' });
+        await checkAuth();
+    } catch (error) {
+        console.error('Error completing TOTP setup:', error);
+        throw error;
+    }
+}
+
+export async function disableTotpMfa() {
+    try {
+        await updateMFAPreference({ totp: 'DISABLED' });
+        await checkAuth();
+    } catch (error) {
+        console.error('Error disabling TOTP MFA:', error);
         throw error;
     }
 }
