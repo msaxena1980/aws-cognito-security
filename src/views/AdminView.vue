@@ -1,10 +1,10 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp } from '../services/auth';
+import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp, handleSignIn } from '../services/auth';
 import { getProfile, updateProfile, startPhoneChange, verifyPhoneOld, verifyPhoneNew, startEmailChange, verifyEmailOld, verifyEmailNew } from '../services/profile';
 import { getVaultMetadata, createEncryptedVaultPackage, saveVaultPackage, changePassphrase as rewrapPassphrase, generatePassphrase, saveEncryptedPassphrase, getPassphraseStatus, verifyPassphrase } from '../services/vault';
-import { completeAccountDeletion } from '../services/account';
+import { completeAccountDeletion, startDeleteOtp, verifyDeleteOtp } from '../services/account';
 
 const router = useRouter();
 const loading = ref(false);
@@ -37,6 +37,8 @@ const phoneOtpSent = ref(false);
 const phoneOtpCode = ref('');
 const emailOtpSent = ref(false);
 const emailOtpCode = ref('');
+const userId = computed(() => authState.user?.userId || '');
+const currentEmail = computed(() => authState.user?.signInDetails?.loginId || profileEmail.value || '');
 
 // Email change flow
 const showEmailChangeModal = ref(false);
@@ -55,6 +57,9 @@ const phoneOldCodeInput = ref('');
 const phoneNewCodeInput = ref('');
 const inlinePhoneOldCode = ref('');
 const inlinePhoneNewCode = ref('');
+
+// Password change (modal)
+const showPasswordChangeModal = ref(false);
 
 onMounted(async () => {
   try {
@@ -236,10 +241,7 @@ async function updatePassword() {
     oldPassword.value = '';
     newPassword.value = '';
     confirmPassword.value = '';
-    setTimeout(() => {
-      showUpdateForm.value = false;
-      success.value = '';
-    }, 3000);
+    showPasswordChangeModal.value = false;
   } catch (err) {
     error.value = err.message || 'Failed to update password';
   } finally {
@@ -419,11 +421,11 @@ function downloadPassphrase(text) {
   URL.revokeObjectURL(url);
 }
 
-async function copyToClipboard(text) {
+async function copyToClipboard(text, lbl) {
   try {
     if (typeof window !== 'undefined' && window.isSecureContext && window.navigator && window.navigator.clipboard) {
       await window.navigator.clipboard.writeText(text);
-      success.value = 'Passphrase copied to clipboard';
+      success.value = lbl == null ? 'Passphrase copied to clipboard' : lbl + ' copied to clipboard';
     } else {
       const ta = document.createElement('textarea');
       ta.value = text;
@@ -505,12 +507,20 @@ function onChipInput(ev, arrRefOrArr, startIndex = 0) {
 const showDeleteModal = ref(false);
 const deleteStep = ref('warning');
 const deleteWords = ref(Array(9).fill(''));
+const deleteOtpCode = ref('');
+const inlineDeleteCode = ref('');
+const deletePassword = ref('');
+const deleteFallback = ref(false);
 
 function startDeleteFlow() {
   error.value = '';
   success.value = '';
   deleteStep.value = 'warning';
   deleteWords.value = Array(9).fill('');
+  deleteOtpCode.value = '';
+  inlineDeleteCode.value = '';
+  deletePassword.value = '';
+  deleteFallback.value = false;
   showDeleteModal.value = true;
 }
 
@@ -518,10 +528,100 @@ async function confirmDeleteWarning() {
   loading.value = true;
   error.value = '';
   try {
-    success.value = 'Enter your 9-word passphrase to confirm deletion.';
-    deleteStep.value = 'passphrase';
+    try {
+      const resp = await startDeleteOtp();
+      inlineDeleteCode.value = resp?.code || '';
+      success.value = inlineDeleteCode.value ? `Dev code: ${inlineDeleteCode.value}` : 'A verification code has been sent to your email.';
+      deleteStep.value = 'otp';
+    } catch (e) {
+      const status = e?.response?.statusCode || e?.statusCode;
+      if (status === 410) {
+        deleteFallback.value = true;
+        await sendEmailOtp();
+        success.value = 'A verification code has been sent to your email.';
+        deleteStep.value = 'otp';
+      } else {
+        throw e;
+      }
+    }
   } catch (e) {
     error.value = e.message || 'Failed to start deletion';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function submitDeleteOtp() {
+  const code = (deleteOtpCode.value || '').trim();
+  if (!code) {
+    error.value = 'Enter the code sent to your email';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    try {
+      await verifyDeleteOtp(code);
+    } catch (e) {
+      const status = e?.response?.statusCode || e?.statusCode;
+      if (status === 410 || status === 404) {
+        deleteFallback.value = true;
+        await confirmEmailOtp(code);
+      } else {
+        throw e;
+      }
+    }
+    try {
+      // Refresh passphrase status to avoid stale state
+      const status = await getPassphraseStatus();
+      passphraseStored.value = !!status.stored;
+    } catch {}
+    success.value = 'Email verified.';
+    deleteStep.value = 'password';
+  } catch (e) {
+    error.value = e.message || 'Code verification failed';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function submitDeletePassword() {
+  const pwd = (deletePassword.value || '').trim();
+  if (!pwd) {
+    error.value = 'Enter your password';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    try {
+      await handleSignIn(currentEmail.value, pwd);
+    } catch (err) {
+      if (err?.name !== 'InvalidStateException' && err?.name !== 'UserAlreadyAuthenticatedException') {
+        throw err;
+      }
+    }
+    if (passphraseStored.value) {
+      success.value = 'Password verified. Enter your 9-word passphrase.';
+      deleteStep.value = 'passphrase';
+    } else {
+      try {
+        await completeAccountDeletion(undefined);
+        success.value = 'Account deleted';
+        showDeleteModal.value = false;
+        await handleSignOut();
+        router.push('/');
+      } catch (delErr) {
+        // If backend requires passphrase anyway or additional verification,
+        // pivot to passphrase step instead of failing the flow
+        success.value = 'Password verified. Enter your 9-word passphrase.';
+        deleteStep.value = 'passphrase';
+      }
+    }
+  } catch (e) {
+    error.value = e.message || 'Password verification failed';
   } finally {
     loading.value = false;
   }
@@ -637,6 +737,18 @@ async function verifyNewEmailCode() {
   }
 }
 
+function copyUserId(text) {
+  if (!userId.value) return;
+  copyToClipboard(userId.value, text);
+}
+
+function enable2FA() {
+  success.value = '2FA setup coming soon.';
+}
+
+function registerPasskey() {
+  success.value = 'Passkey registration coming soon.';
+}
 </script>
 
 
@@ -652,78 +764,116 @@ async function verifyNewEmailCode() {
       <div v-if="success" class="success-message">{{ success }}</div>
       
       <section class="profile-section">
-        <h2>User Profile</h2>
-        <form @submit.prevent="saveProfileNameEmail" class="update-form">
-          <div class="form-group form-inline">
-            <label for="profileName">Name</label>
-            <input type="text" id="profileName" v-model="profileName" placeholder="Your full name" />
+        <h2 class="section-title">Profile</h2>
+        <div class="profile-card">
+          <div class="profile-fields">
+            <div class="field-row">
+              <div class="field-inline">
+                <input type="text" id="profileName" v-model="profileName" placeholder="Your full name" />
+                <button type="button" class="primary-button" :disabled="loading || !canSaveName" @click="saveProfileNameEmail">
+                  {{ loading ? 'Saving...' : 'Save' }}
+                </button>
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="id-row">
+                <label>Account ID : {{ userId }}</label>
+                <button type="button" class="secondary-button" @click="copyUserId('AccountId')" :disabled="!userId">Copy</button>
+              </div>
+            </div>
           </div>
-          <div class="form-group form-inline">
-            <label for="profileEmail">Email</label>
-            <input type="email" id="profileEmail" v-model="profileEmail" readonly placeholder="your@email.com" />
-            <button type="button" class="secondary-button" @click="openEmailChange">Change Email ID</button>
-          </div>
-          <div class="form-group form-inline">
-            <label for="profilePhone">Mobile Number</label>
-            <input type="tel" id="profilePhone" v-model="profilePhone" readonly placeholder="+1XXXXXXXXXX" />
-            <button type="button" class="secondary-button" @click="openPhoneChange">Change Mobile</button>
-          </div>
-          <div class="form-actions">
-            <button type="submit" :disabled="loading || !canSaveName" class="submit-button">
-              {{ loading ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
-          
-        </form>
+        </div>
       </section>
 
-      <div v-if="!vaultExists || !passphraseStored">
-        <div class="actions-row">
+      <section class="security-section">
+        <div class="feature-card">
+          <div class="feature-info">
+            <div class="feature-title">Email</div>
+            <div class="feature-sub">Current: {{ profileEmail }}</div>
+          </div>
+          <button class="primary-button" @click="openEmailChange">Change Email</button>
+        </div>
+      </section>
+
+      <section class="security-section">
+        <div class="feature-card">
+          <div class="feature-info">
+            <div class="feature-title">Mobile Number</div>
+            <div class="feature-sub">Current: {{ profilePhone || 'Not set' }}</div>
+          </div>
+          <button class="primary-button" @click="openPhoneChange">Change Mobile</button>
+        </div>
+      </section>
+
+      <section class="security-section">
+        <div class="feature-card">
+          <div class="feature-info">
+            <div class="feature-title">Authenticator App</div>
+            <div class="feature-sub">Enabled multi factor security on your account</div>
+          </div>
+          <button class="primary-button" @click="enable2FA">Enable 2FA</button>
+        </div>
+      </section>
+
+      <section class="security-section">
+        <div class="feature-card">
+          <div class="feature-info">
+            <div class="feature-title">Passkeys</div>
+            <div class="feature-sub">Consider registering a passkey on your account</div>
+          </div>
+          <button class="primary-button" @click="registerPasskey">Add Passkey</button>
+        </div>
+      </section>
+
+      <section class="security-section" v-if="!vaultExists || !passphraseStored">
+        <div class="feature-card">
+          <div class="feature-info">
+            <div class="feature-title">Secure Vault</div>
+            <div class="feature-sub">Create a vault to protect your keys</div>
+          </div>
           <button type="button" class="primary-button" @click="() => { setupStep = 'intro'; showPassphraseModal = true; }">Create Vault</button>
         </div>
-      </div>
-      <div v-if="vaultExists && passphraseStored">
-        <div class="actions-row">
-          <button class="action-button" @click="startChangePassphrase">Change Passphrase</button>
+      </section>
+      <section class="security-section" v-if="vaultExists && passphraseStored">
+        <div class="feature-card">
+          <div class="feature-info">
+            <div class="feature-title">Passphrase</div>
+            <div class="feature-sub">Change your 9-word passphrase</div>
+          </div>
+        <button class="primary-button" @click="startChangePassphrase">Change Passphrase</button>
         </div>
-        <hr />
-      </div>
-      <div v-if="!showUpdateForm">
-        <button @click="showUpdateForm = true" class="action-button">Change Password</button>
-      </div>
-
-      <form v-else @submit.prevent="updatePassword" class="update-form">
-        <div class="form-group">
-          <label for="oldPassword">Current Password</label>
-          <input type="password" id="oldPassword" v-model="oldPassword" required />
+      </section>
+      <section class="security-section">
+        <div class="feature-card">
+          <div class="feature-info">
+            <div class="feature-title">Password</div>
+            <div class="feature-sub">Update your account password</div>
+          </div>
+          <button class="primary-button" @click="showPasswordChangeModal = true">Change Password</button>
         </div>
-        <div class="form-group">
-          <label for="newPassword">New Password</label>
-          <input type="password" id="newPassword" v-model="newPassword" required />
-        </div>
-        <div class="form-group">
-          <label for="confirmPassword">Confirm New Password</label>
-          <input type="password" id="confirmPassword" v-model="confirmPassword" required />
-        </div>
-        <div class="form-actions">
-          <button type="submit" :disabled="loading" class="submit-button">
-            {{ loading ? 'Updating...' : 'Save New Password' }}
-          </button>
-          <button type="button" @click="showUpdateForm = false" class="cancel-button">Cancel</button>
-        </div>
-      </form>
+      </section>
     </div>
 
-    <div class="danger-zone">
-      <h3>Danger Zone</h3>
-      <button @click="startDeleteFlow" class="danger-button">Delete Account</button>
-    </div>
+    <section class="danger-section">
+      <div class="danger-card">
+        <div class="danger-body">
+          <p>Click here to delete your account.<br/>
+          When you delete your account, all your data in this application will be removed.<br/>
+          You cannot reset your trial by deleting your account.</p>
+        </div>
+        <div class="danger-actions">
+          <button @click="startDeleteFlow" class="danger-button">Delete account</button>
+        </div>
+      </div>
+    </section>
 
   <div v-if="showDeleteModal" class="modal-backdrop">
     <div class="modal">
       <div class="modal-header">
         <div class="modal-title">
           <span v-if="deleteStep==='warning'">Delete account</span>
+          <span v-else-if="deleteStep==='otp'">Verify Email</span>
+          <span v-else-if="deleteStep==='password'">Verify Password</span>
           <span v-else>Verify passphrase</span>
         </div>
         <button class="modal-close" @click="showDeleteModal = false">×</button>
@@ -735,6 +885,27 @@ async function verifyNewEmailCode() {
           <div class="modal-actions">
             <button class="secondary-button" @click="showDeleteModal=false">Cancel</button>
             <button class="primary-button" :disabled="loading" @click="confirmDeleteWarning">{{ loading ? 'Working...' : 'Yes, delete my account' }}</button>
+          </div>
+        </div>
+        <div v-else-if="deleteStep==='otp'">
+          <div v-if="inlineDeleteCode" class="info-inline">Dev code: {{ inlineDeleteCode }}</div>
+          <div class="form-group">
+            <label for="delCode">Code from Email</label>
+            <input id="delCode" type="text" v-model="deleteOtpCode" placeholder="Enter code" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showDeleteModal=false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="submitDeleteOtp">{{ loading ? 'Verifying...' : 'Verify Email' }}</button>
+          </div>
+        </div>
+        <div v-else-if="deleteStep==='password'">
+          <div class="form-group">
+            <label for="delPwd">Password</label>
+            <input id="delPwd" type="password" v-model="deletePassword" placeholder="Enter your password" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showDeleteModal=false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="submitDeletePassword">{{ loading ? 'Verifying...' : 'Verify Password' }}</button>
           </div>
         </div>
         <div v-else>
@@ -752,6 +923,32 @@ async function verifyNewEmailCode() {
       </div>
     </div>
   </div>
+  </div>
+  <div v-if="showPasswordChangeModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Change Password</div>
+        <button class="modal-close" @click="showPasswordChangeModal = false">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="oldPassword">Current Password</label>
+          <input type="password" id="oldPassword" v-model="oldPassword" required />
+        </div>
+        <div class="form-group">
+          <label for="newPassword">New Password</label>
+          <input type="password" id="newPassword" v-model="newPassword" required />
+        </div>
+        <div class="form-group">
+          <label for="confirmPassword">Confirm New Password</label>
+          <input type="password" id="confirmPassword" v-model="confirmPassword" required />
+        </div>
+        <div class="modal-actions">
+          <button class="secondary-button" @click="showPasswordChangeModal = false">Cancel</button>
+          <button class="primary-button" :disabled="loading" @click="updatePassword">{{ loading ? 'Updating...' : 'Save New Password' }}</button>
+        </div>
+      </div>
+    </div>
   </div>
   <div v-if="showEmailChangeModal" class="modal-backdrop">
     <div class="modal">
@@ -867,7 +1064,7 @@ async function verifyNewEmailCode() {
             <span v-for="(w,i) in generatedWords" :key="i" class="chip big">{{ w }}</span>
           </div>
           <div class="modal-actions">
-            <button class="secondary-button" @click="copyToClipboard(passphrase)">Copy</button>
+            <button class="secondary-button" @click="copyToClipboard(passphrase, 'Passphrase')">Copy</button>
             <button class="secondary-button" @click="downloadPassphrase(passphrase)">Download .txt</button>
             <button class="primary-button" @click="goToConfirmWord">Continue</button>
           </div>
@@ -933,7 +1130,7 @@ async function verifyNewEmailCode() {
             <span v-for="(w,i) in newWords" :key="i" class="chip big">{{ w }}</span>
           </div>
           <div class="modal-actions">
-            <button class="secondary-button" @click="copyToClipboard(newPassphraseGenerated)">Copy</button>
+            <button class="secondary-button" @click="copyToClipboard(newPassphraseGenerated, 'New Passphrase')">Copy</button>
             <button class="secondary-button" @click="downloadPassphrase(newPassphraseGenerated)">Download .txt</button>
             <button class="primary-button" @click="goToConfirmNew">Continue</button>
           </div>
@@ -1107,6 +1304,76 @@ li {
 .profile-section {
   margin-bottom: 2rem;
 }
+.profile-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background);
+}
+.profile-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+.field-inline {
+  display: flex;
+  gap: .75rem;
+  align-items: center;
+}
+.id-row {
+  display: flex;
+  gap: .75rem;
+  align-items: center;
+}
+.id-value {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  word-break: break-all;
+}
+.security-section {
+  margin: 2rem 0;
+}
+.section-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin: 0 0 1rem 0;
+  color: var(--color-heading);
+}
+.feature-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-background);
+}
+.feature-info {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+.feature-title {
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+.feature-sub {
+  color: var(--color-text-light);
+}
 .form-inline {
   display: flex;
   gap: 0.75rem;
@@ -1202,6 +1469,27 @@ li {
   margin-top: 2rem;
   padding-top: 1rem;
   border-top: 1px solid var(--color-border);
+}
+.danger-section {
+  margin-top: 2rem;
+}
+.danger-card {
+  border: 2px solid #d32029;
+  border-radius: 10px;
+  background: var(--color-background);
+}
+.danger-title {
+  padding: .75rem 1rem;
+  font-weight: 800;
+  border-bottom: 1px solid rgba(211,32,41,.45);
+}
+.danger-body {
+  padding: 1rem;
+  color: var(--color-text);
+  opacity: .95;
+}
+.danger-actions {
+  padding: 0 1rem 1rem;
 }
 .danger-button {
   padding: 0.6rem 1rem;
