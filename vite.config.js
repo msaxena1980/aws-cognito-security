@@ -15,4 +15,8 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  server: {
+    // Disable automatic editor opening on errors
+    open: false,
+  },
 })

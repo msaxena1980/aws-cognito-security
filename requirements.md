@@ -737,20 +737,36 @@ This section summarizes the key recommendations and their **implementation statu
 10. ✅ TypeScript - Comprehensive type definitions
 
 **New Files Created:**
-- `infra/lib/tables.js` - Modular table definitions
-- `infra/lib/api-config.js` - Rate limiting configuration
-- `infra/lib/secrets.js` - Secrets Manager integration
-- `infra/lib/infra-stack-v2.js` - Optimized infrastructure stack
-- `infra/lambda/utils/validation.js` - Input validation utilities
-- `infra/lambda/utils/errors.js` - Standardized error handling
-- `infra/lambda/utils/logger.js` - Structured logging
-- `infra/lambda/utils/secrets.js` - Secrets retrieval with caching
-- `infra/lambda/types/index.d.ts` - Backend TypeScript types
-- `infra/lambda/getAuthMethods-v2.js` - Example optimized Lambda
-- `src/services/fingerprint.js` - Device fingerprinting service
-- `src/services/auth-optimized.js` - Optimized auth operations
-- `src/types/index.ts` - Frontend TypeScript types
-- `docs/OPTIMIZATION_IMPLEMENTATION.md` - Detailed implementation guide
+- `infra/lib/tables.js` - Modular table definitions (NOT USED - example only)
+- `infra/lib/api-config.js` - Rate limiting configuration (NOT USED - example only)
+- `infra/lib/secrets.js` - Secrets Manager integration (NOT USED - example only)
+- `infra/lib/infra-stack-v2.js` - Optimized infrastructure stack (NOT USED - example only)
+- `infra/lambda/utils/validation.js` - Input validation utilities ✅ READY TO USE
+- `infra/lambda/utils/errors.js` - Standardized error handling ✅ READY TO USE
+- `infra/lambda/utils/logger.js` - Structured logging ✅ READY TO USE
+- `infra/lambda/utils/secrets.js` - Secrets retrieval with caching ✅ READY TO USE
+- `infra/lambda/types/index.d.ts` - Backend TypeScript types ✅ READY TO USE
+- `infra/lambda/getAuthMethods-v2.js` - Example optimized Lambda (NOT USED - example only)
+- `src/services/fingerprint.js` - Device fingerprinting service ✅ READY TO USE
+- `src/services/auth-optimized.js` - Optimized auth operations (NOT USED - example only)
+- `src/types/index.ts` - Frontend TypeScript types ✅ READY TO USE
+- `docs/OPTIMIZATION_IMPLEMENTATION.md` - Detailed implementation guide (NOT USED - example only)
+
+**Note on Example Files:**
+Several files were created as examples of optimization patterns but are not currently integrated into the main codebase:
+- `infra/lib/*` - Modular infrastructure examples (current stack uses single `stack.js`)
+- `infra/lambda/getAuthMethods-v2.js` - Shows how to use validation/error/logging utilities
+- `src/services/auth-optimized.js` - Shows caching and batched operations pattern
+
+These can be integrated when needed, but the current implementation prioritizes simplicity with all infrastructure in `stack.js`.
+
+**Active Utilities (Ready to Use):**
+The following utility modules are production-ready and can be imported into any Lambda function:
+- `utils/validation.js` - Email, phone, passphrase, device ID validation
+- `utils/errors.js` - Standardized error responses with proper HTTP codes
+- `utils/logger.js` - Structured JSON logging for CloudWatch Logs Insights
+- `utils/secrets.js` - AWS Secrets Manager integration with caching
+- `types/index.d.ts` - TypeScript type definitions for Lambda events/responses
 
 **Migration Path:**
 See `docs/OPTIMIZATION_IMPLEMENTATION.md` for detailed migration guide and rollback plan.
@@ -960,6 +976,287 @@ All optimizations are production-ready and follow these principles:
 - Backward compatible
 
 This brings the aws-cognito-security project to production-grade quality with improved security, performance, code quality, and architecture.
+
+---
+
+## 10. Infrastructure Quick Reference
+
+### File Structure
+
+```
+infra/
+├── stack.js      - Complete CDK infrastructure (all resources in one file)
+├── create.js     - Deploy script with comprehensive documentation
+├── destroy.js    - Destroy script with confirmation
+├── lambda/       - Lambda function code (9 functions + utilities)
+└── tests/        - Lambda tests (Jest + aws-sdk-client-mock)
+```
+
+### Quick Commands
+
+#### Deploy Everything
+```bash
+cd infra
+npm run create
+```
+
+This will:
+1. Deploy all AWS resources (Cognito, DynamoDB, Lambda, API Gateway, KMS)
+2. Save outputs to `outputs.json`
+3. **Automatically update `../src/aws-exports.js`** with new values
+4. Display deployment summary
+
+#### Destroy Everything
+```bash
+cd infra
+npm run destroy
+```
+
+Prompts for confirmation, then deletes all AWS resources.
+
+#### Run Tests
+```bash
+cd infra
+npm test
+```
+
+### What's Deployed (Free Tier Optimized)
+
+1. **Cognito User Pool**
+   - Email/password authentication (case-insensitive)
+   - Optional TOTP MFA (no SMS in sandbox)
+   - Email verification
+   - 50,000 MAUs free
+
+2. **DynamoDB Tables** (Provisioned 1 RCU/WCU each)
+   - `UserSecurity` - User profiles, vault data, passphrases
+   - `EmailMapping` - Stable email-to-sub mapping (with SubIndex GSI)
+   - `DeviceTracking` - Login device history (with LastLoginIndex GSI)
+
+3. **Lambda Functions** (128MB memory, Node.js 20.x)
+   - **Triggers:** PreSignUp, PostConfirmation, PostAuthentication
+   - **API Handlers:** Hello, GetAuthMethods, Vault, Account, Profile, Phone, EmailChange, VerifyCredentials
+
+4. **API Gateway**
+   - REST API with Cognito authorizer
+   - Rate limiting (100 req/s, burst 200)
+   - CORS enabled (configurable for production)
+   - 1M requests free (first 12 months)
+
+5. **KMS Key**
+   - For vault/passphrase encryption
+   - Key rotation enabled
+
+**Total Cost: $0/month** (within AWS Free Tier)
+
+### Environment Variables (Optional)
+
+Set before deployment for email features and vault encryption:
+
+```bash
+export SES_SENDER_EMAIL="your-verified-email@example.com"
+export ENCRYPTION_KEY="your-secret-key"
+```
+
+If not set, defaults are used (see `infra/stack.js`).
+
+### After Deployment
+
+The `create.js` script automatically updates `src/aws-exports.js`. Just start the frontend:
+
+```bash
+cd ..
+npm run dev
+```
+
+Visit: http://localhost:5173/
+
+### Manual CDK Commands
+
+```bash
+cd infra
+
+# List stacks
+npx cdk list --app "node stack.js"
+
+# Show changes
+npx cdk diff --app "node stack.js"
+
+# Deploy with approval
+npx cdk deploy --app "node stack.js"
+
+# Destroy with confirmation
+npx cdk destroy --app "node stack.js"
+```
+
+### Troubleshooting
+
+#### Check AWS credentials
+```bash
+aws sts get-caller-identity
+```
+
+#### Verify deployed resources
+```bash
+# List DynamoDB tables
+aws dynamodb list-tables --region us-east-1
+
+# Check table capacity
+aws dynamodb describe-table --table-name UserSecurity --region us-east-1
+
+# List Lambda functions
+aws lambda list-functions --region us-east-1 --query 'Functions[?contains(FunctionName, `InfraStack`)].FunctionName'
+
+# Check Cognito user pool
+aws cognito-idp list-user-pools --max-results 10 --region us-east-1
+```
+
+#### Manual cleanup
+```bash
+# Delete stack via CloudFormation
+aws cloudformation delete-stack --stack-name InfraStack --region us-east-1
+
+# Wait for deletion
+aws cloudformation wait stack-delete-complete --stack-name InfraStack --region us-east-1
+```
+
+### Cost Monitoring
+
+Monitor your usage even with free tier optimization:
+
+```bash
+# Check DynamoDB consumed capacity
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/DynamoDB \
+  --metric-name ConsumedReadCapacityUnits \
+  --dimensions Name=TableName,Value=UserSecurity \
+  --start-time 2026-02-01T00:00:00Z \
+  --end-time 2026-02-28T23:59:59Z \
+  --period 86400 \
+  --statistics Sum \
+  --region us-east-1
+```
+
+### Free Tier Usage
+
+Your stack uses:
+- **DynamoDB**: 6 RCU + 6 WCU (out of 25 free)
+- **Lambda**: 9 functions @ 128MB (1M requests free)
+- **API Gateway**: 1 API (1M calls free for 12 months)
+- **Cognito**: 1 user pool (50,000 MAUs free)
+- **CloudWatch Logs**: Lambda logs (5 GB free)
+- **KMS**: Key operations (20,000 requests free)
+
+### Production Considerations
+
+For production deployment, consider upgrading:
+
+1. **DynamoDB**: Switch to PAY_PER_REQUEST or higher provisioned capacity
+2. **Lambda**: Increase memory to 256-512MB for better performance
+3. **KMS**: Already included for vault encryption
+4. **Secrets Manager**: Use for sensitive configuration (instead of environment variables)
+5. **CloudWatch**: Enable detailed monitoring and set up alarms
+6. **Cognito**: Enable advanced security features (risk-based adaptive auth)
+7. **CORS**: Restrict to specific production domains
+8. **SES**: Use verified identities instead of wildcard permissions
+
+Estimated production cost: $5-10/month for low traffic
+
+### Key Consolidation Changes
+
+#### What Was Consolidated
+- ✅ All CDK code merged into single `stack.js` file
+- ✅ Simple `create.js` and `destroy.js` scripts
+- ✅ Removed redundant files (lib/, bin/, scripts/modules/)
+- ✅ Removed redundant documentation files
+- ✅ Auto-configuration of frontend (`src/aws-exports.js`)
+
+#### Free Tier Optimization
+- ✅ DynamoDB: Provisioned mode (1 RCU/WCU per table)
+- ✅ Lambda: 128MB memory, 3-5s timeout
+- ✅ Using environment variables for configuration
+- ✅ All resources configured for AWS Free Tier
+
+---
+
+## 11. 2FA Disable Flow Implementation
+
+### Problem
+The disable 2FA flow was failing with a 401 Unauthorized error because it was trying to verify both password and TOTP code in a single step.
+
+### Solution
+Refactored the disable 2FA flow into two separate verification steps:
+
+#### Step 1: Password Verification
+- User enters their password
+- Frontend calls `verifyCredentials(email, password, null)` 
+- Backend verifies password only and returns success if password is correct
+- Password is stored temporarily in `verifiedPassword` ref for the next step
+- User sees success message and moves to Step 2
+
+#### Step 2: TOTP Code Verification
+- User enters their 6-digit 2FA code
+- Frontend calls `verifyCredentials(email, storedPassword, totpCode)`
+- Backend verifies both password and TOTP code
+- If successful, frontend calls `disableTotpMfa()` to disable 2FA
+- Profile is updated to reflect 2FA disabled status
+- User remains logged in throughout the process
+
+### Implementation Changes
+
+#### Backend (infra/lambda/verifyCredentials.js)
+- Created new Lambda function that verifies user credentials without creating a new session
+- Verifies password using Cognito's `InitiateAuth` API
+- Verifies TOTP code using Cognito's `RespondToAuthChallenge` API
+- Returns `requiresMfa: true` when password is verified but MFA is pending
+- Returns `requiresMfa: false` when both password and TOTP are verified
+- Provides clear error messages with `field` indicator for better error handling
+
+#### Infrastructure (infra/stack.js)
+- Added `verifyCredentialsLambda` function
+- Created API endpoint `/verify-credentials` (POST) - public endpoint (no authorizer)
+- Granted necessary Cognito permissions (`cognito-idp:InitiateAuth`, `cognito-idp:RespondToAuthChallenge`)
+
+#### Frontend (src/services/auth.js)
+- Added `verifyCredentials(email, password, totpCode)` function
+- Explicitly passes `totpCode: totpCode || null` to ensure null is sent when TOTP code is not provided
+- Parses error responses with field-specific error information
+
+#### Frontend (src/views/AdminView.vue)
+- Added `verifiedPassword` ref to temporarily store the verified password
+- Updated `verifyPasswordStep()` to call `verifyCredentials` with password only
+- Updated `confirmDisableTwoFA()` to use stored password with TOTP code for verification
+- Updated `backToPasswordStep()` and `enable2FA()` to clear stored password
+- Shows specific error messages: "Incorrect password" or "Incorrect 2FA code"
+
+### User Experience Flow
+
+1. User clicks "Disable 2FA"
+2. Modal opens showing "Step 1: Enter your password"
+3. User enters password and clicks "Next"
+4. If password is correct: Success message + move to Step 2
+5. If password is wrong: Clear error message "Incorrect password"
+6. Step 2 shows: "Enter your 2FA code"
+7. User enters 6-digit code and clicks "Disable 2FA"
+8. If code is correct: 2FA is disabled, success message shown, user stays logged in
+9. If code is wrong: Clear error message "Incorrect 2FA code. Please try again."
+10. User can go back to Step 1 at any time
+
+### Security Considerations
+
+- Password is stored temporarily in memory only during the 2FA disable flow
+- Password is cleared immediately after use or when going back
+- Password is cleared when modal is closed
+- User remains authenticated throughout the process
+- Both password and TOTP must be verified before 2FA can be disabled
+
+### Error Handling
+
+- Password errors show: "Incorrect password"
+- TOTP errors show: "Incorrect 2FA code. Please try again."
+- Network errors show: Generic error message
+- All errors are displayed clearly in the UI
+- Each step validates input before making API calls
 
 ---
 

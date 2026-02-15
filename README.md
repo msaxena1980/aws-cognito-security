@@ -1,6 +1,212 @@
-# aws-security
+# AWS Cognito Security Demo
 
-This template should help get you started developing with Vue 3 in Vite.
+A full-stack security demo showcasing AWS Cognito authentication with Vue 3, featuring email/password sign-in, optional TOTP 2FA, encrypted vault, device tracking, and comprehensive account management.
+
+## Features
+
+- **Authentication**: Email/password sign-in with AWS Cognito
+- **Multi-Factor Authentication**: Optional TOTP (authenticator app) support
+- **Encrypted Vault**: KMS-encrypted passphrase and vault data storage
+- **Device Tracking**: Login history with anomaly detection and security alerts
+- **Account Management**: Profile editing, phone/email change flows, account deletion
+- **Free Tier Optimized**: All AWS resources configured for $0/month cost
+
+## Tech Stack
+
+- **Frontend**: Vue 3, Vue Router, Vite, AWS Amplify v6
+- **Backend**: AWS CDK, Lambda (Node.js 20), API Gateway, Cognito
+- **Data**: DynamoDB (3 tables), KMS for encryption
+- **Infrastructure**: Single CDK stack, fully automated deployment
+
+## Quick Start
+
+### 1. Prerequisites
+
+- Node.js 18+ and npm
+- AWS CLI configured with credentials
+- AWS account with Free Tier eligibility
+
+### 2. Deploy Infrastructure
+
+```bash
+cd infra
+npm install
+npm run create
+```
+
+This will:
+- Deploy all AWS resources (Cognito, DynamoDB, Lambda, API Gateway, KMS)
+- Automatically update `src/aws-exports.js` with deployment values
+- Display deployment summary
+
+### 3. Start Frontend
+
+```bash
+cd ..
+npm install
+npm run dev
+```
+
+Visit: http://localhost:5173/
+
+### 4. Test the Application
+
+- Sign up with a new account
+- Verify email (check your inbox)
+- Log in and explore features:
+  - Enable 2FA with authenticator app
+  - Create encrypted vault with passphrase
+  - Update profile, phone, email
+  - View device login history
+
+## Project Structure
+
+```
+aws-cognito-security/
+├── src/                    # Vue 3 frontend
+│   ├── views/             # Login, Signup, Admin views
+│   ├── services/          # Auth, profile, vault services
+│   └── components/        # Reusable UI components
+├── infra/                 # AWS infrastructure
+│   ├── stack.js          # Complete CDK infrastructure
+│   ├── create.js         # Deploy script
+│   ├── destroy.js        # Destroy script
+│   ├── lambda/           # Lambda functions (9 total)
+│   └── tests/            # Lambda tests (Jest)
+└── docs/                  # Complete documentation
+    └── aws-cognito-implementation-plan.md
+```
+
+## Documentation
+
+- **[Complete Implementation Plan](docs/aws-cognito-implementation-plan.md)** - Architecture, implementation details, optimizations
+- **[Infrastructure Guide](infra/README.md)** - Deployment, troubleshooting, AWS resources
+- **[Consolidation Summary](CONSOLIDATION_SUMMARY.md)** - Recent consolidation work
+
+## AWS Resources (Free Tier)
+
+- **Cognito User Pool**: Email authentication, optional TOTP MFA (50,000 MAUs free)
+- **DynamoDB Tables**: UserSecurity, EmailMapping, DeviceTracking (6 RCU/WCU total)
+- **Lambda Functions**: 9 functions @ 128MB (1M requests free)
+- **API Gateway**: REST API with Cognito authorizer (1M requests free)
+- **KMS Key**: Vault/passphrase encryption (20,000 requests free)
+
+**Total Cost: $0/month** (within AWS Free Tier)
+
+## Key Features Implemented
+
+### Authentication & Security
+- ✅ Email/password sign-in with Cognito
+- ✅ Email verification
+- ✅ Password reset flow
+- ✅ Optional TOTP 2FA (authenticator app)
+- ✅ Device fingerprinting and tracking
+- ✅ Security alerts for new device logins
+
+### Account Management
+- ✅ Profile editing (name, email, phone)
+- ✅ Phone number change with verification
+- ✅ Email change with verification
+- ✅ Password change
+- ✅ 2FA enable/disable with verification
+- ✅ Account deletion with passphrase confirmation
+
+### Vault & Encryption
+- ✅ KMS-encrypted passphrase storage
+- ✅ Encrypted vault data in DynamoDB
+- ✅ Passphrase verification for sensitive operations
+
+### Infrastructure
+- ✅ Single CDK stack (all resources in one file)
+- ✅ Automated deployment with frontend auto-configuration
+- ✅ Free Tier optimized (DynamoDB provisioned, Lambda 128MB)
+- ✅ Comprehensive Lambda tests (Jest + aws-sdk-client-mock)
+
+## Development
+
+### Frontend Development
+
+```bash
+npm run dev          # Start dev server
+npm run build        # Build for production
+npm run preview      # Preview production build
+```
+
+### Infrastructure Development
+
+```bash
+cd infra
+npm test             # Run Lambda tests
+npm run create       # Deploy infrastructure
+npm run destroy      # Destroy infrastructure
+```
+
+### Environment Variables (Optional)
+
+```bash
+export SES_SENDER_EMAIL="your-verified-email@example.com"
+export ENCRYPTION_KEY="your-secret-key"
+```
+
+## Troubleshooting
+
+### Deployment Issues
+
+```bash
+# Check AWS credentials
+aws sts get-caller-identity
+
+# Manually destroy stuck stack
+aws cloudformation delete-stack --stack-name InfraStack --region us-east-1
+```
+
+### Frontend Not Connecting
+
+- Verify `src/aws-exports.js` was auto-generated by `create.js`
+- Check API Gateway URL in `aws-exports.js` matches deployed API
+- Ensure CORS is enabled in API Gateway
+
+### Lambda Errors
+
+```bash
+# View Lambda logs
+aws logs tail /aws/lambda/InfraStack-PostAuthenticationHandler --follow
+
+# Check DynamoDB tables
+aws dynamodb list-tables --region us-east-1
+```
+
+## Production Considerations
+
+For production deployment:
+
+1. **DynamoDB**: Switch to PAY_PER_REQUEST or higher capacity
+2. **Lambda**: Increase memory to 256-512MB
+3. **CORS**: Restrict to specific production domains
+4. **Cognito**: Enable advanced security features
+5. **Monitoring**: Set up CloudWatch alarms
+6. **Secrets**: Use AWS Secrets Manager instead of environment variables
+
+Estimated production cost: $5-10/month for low traffic
+
+## Testing
+
+```bash
+# Frontend tests (not yet implemented)
+npm test
+
+# Lambda tests
+cd infra
+npm test
+```
+
+## License
+
+MIT
+
+## Contributing
+
+This is a demo project. Feel free to fork and adapt for your needs.
 
 ## Recommended IDE Setup
 
@@ -14,25 +220,3 @@ This template should help get you started developing with Vue 3 in Vite.
 - Firefox:
   - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
   - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
-
-## Customize configuration
-
-See [Vite Configuration Reference](https://vite.dev/config/).
-
-## Project Setup
-
-```sh
-npm install
-```
-
-### Compile and Hot-Reload for Development
-
-```sh
-npm run dev
-```
-
-### Compile and Minify for Production
-
-```sh
-npm run build
-```
