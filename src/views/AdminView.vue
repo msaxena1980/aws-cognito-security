@@ -1,7 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut } from '../services/auth';
+import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp } from '../services/auth';
+import { getProfile, updateProfile, startPhoneChange, verifyPhoneOld, verifyPhoneNew, startEmailChange, verifyEmailOld, verifyEmailNew } from '../services/profile';
 import { getVaultMetadata, createEncryptedVaultPackage, saveVaultPackage, changePassphrase as rewrapPassphrase, generatePassphrase, saveEncryptedPassphrase, getPassphraseStatus, verifyPassphrase } from '../services/vault';
 import { completeAccountDeletion } from '../services/account';
 
@@ -27,8 +28,44 @@ const confirmIndex = ref(0);
 const confirmInput = ref('');
 const showPassphraseModal = ref(false);
 
+// Profile state
+const profileName = ref('');
+const profileEmail = ref('');
+const profilePhone = ref('');
+const phoneOtpSent = ref(false);
+const phoneOtpCode = ref('');
+const emailOtpSent = ref(false);
+const emailOtpCode = ref('');
+
+// Email change flow
+const showEmailChangeModal = ref(false);
+const emailChangeStep = ref('new');
+const newEmailInput = ref('');
+const codeOldInput = ref('');
+const codeNewInput = ref('');
+const inlineOldCode = ref('');
+const inlineNewCode = ref('');
+
+// Phone change (modal)
+const showPhoneChangeModal = ref(false);
+const phoneChangeStep = ref('new'); // 'new' | 'verify-old' | 'verify-new'
+const newPhoneInput = ref('');
+const phoneOldCodeInput = ref('');
+const phoneNewCodeInput = ref('');
+const inlinePhoneOldCode = ref('');
+const inlinePhoneNewCode = ref('');
+
 onMounted(async () => {
   try {
+    // Load profile
+    try {
+      const prof = await getProfile();
+      profileName.value = prof.name || '';
+      profileEmail.value = prof.email || authState.user?.signInDetails?.loginId || '';
+      profilePhone.value = prof.phone || '';
+    } catch (e) {
+      console.warn('Profile fetch failed:', e);
+    }
     const meta = await getVaultMetadata();
     vaultExists.value = !!meta.exists;
     const status = await getPassphraseStatus();
@@ -39,6 +76,142 @@ onMounted(async () => {
     console.warn('Vault metadata fetch failed:', e);
   }
 });
+
+async function saveProfileNameEmail() {
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await updateNameEmail(profileName.value, undefined);
+    await updateProfile({ name: profileName.value });
+    success.value = 'Name updated.';
+  } catch (e) {
+    error.value = e.message || 'Failed to update profile';
+  } finally {
+    loading.value = false;
+  }
+}
+
+function openPhoneChange() {
+  error.value = '';
+  success.value = '';
+  newPhoneInput.value = '';
+  phoneOtpCode.value = '';
+  inlinePhoneOldCode.value = '';
+  inlinePhoneNewCode.value = '';
+  phoneChangeStep.value = 'new';
+  showPhoneChangeModal.value = true;
+}
+
+async function setPhoneAndSendOtp() {
+  const e164 = /^\+[1-9]\d{1,14}$/;
+  if (!e164.test((newPhoneInput.value || '').trim())) {
+    error.value = 'Enter a valid mobile number in E.164 format, e.g., +14155550123';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    const res = await startPhoneChange(newPhoneInput.value);
+    phoneChangeStep.value = 'verify-old';
+    inlinePhoneOldCode.value = res?.codeOld || '';
+    success.value = inlinePhoneOldCode.value
+      ? `Dev mode: Code sent to current mobile is ${inlinePhoneOldCode.value}`
+      : 'A verification code has been sent to your current contact (sandbox).';
+  } catch (e) {
+    error.value = e.message || 'Failed to send OTP';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function verifyOldPhoneCode() {
+  const code = (phoneOldCodeInput.value || '').trim();
+  if (!code) {
+    error.value = 'Enter the code sent to your current mobile';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    const resp = await verifyPhoneOld(code);
+    inlinePhoneNewCode.value = resp?.codeNew || '';
+    phoneChangeStep.value = 'verify-new';
+    success.value = inlinePhoneNewCode.value
+      ? `Dev mode: Code sent to new mobile is ${inlinePhoneNewCode.value}`
+      : 'A verification code has been sent to your new mobile (sandbox).';
+  } catch (e) {
+    error.value = e.message || 'Current mobile verification failed';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function verifyNewPhoneCode() {
+  const code = (phoneNewCodeInput.value || '').trim();
+  if (!code) {
+    error.value = 'Enter the code sent to your new mobile';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await verifyPhoneNew(code);
+    profilePhone.value = (newPhoneInput.value || '').trim();
+    await updateProfile({ name: profileName.value, email: profileEmail.value, phone: profilePhone.value });
+    success.value = 'Mobile number updated and verified.';
+    showPhoneChangeModal.value = false;
+    newPhoneInput.value = '';
+    phoneOldCodeInput.value = '';
+    phoneNewCodeInput.value = '';
+    inlinePhoneOldCode.value = '';
+    inlinePhoneNewCode.value = '';
+    phoneChangeStep.value = 'new';
+  } catch (e) {
+    error.value = e.message || 'New mobile verification failed';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function sendEmailCode() {
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await sendEmailOtp();
+    emailOtpSent.value = true;
+    success.value = 'Verification code sent to your email.';
+  } catch (e) {
+    error.value = e.message || 'Failed to send email code';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function confirmEmail() {
+  if (!emailOtpCode.value) {
+    error.value = 'Enter the email code';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await confirmEmailOtp(emailOtpCode.value);
+    await updateProfile({ name: profileName.value, email: profileEmail.value, phone: profilePhone.value });
+    success.value = 'Email verified.';
+    emailOtpSent.value = false;
+    emailOtpCode.value = '';
+  } catch (e) {
+    error.value = e.message || 'Failed to verify email';
+  } finally {
+    loading.value = false;
+  }
+}
 
 async function updatePassword() {
   if (newPassword.value !== confirmPassword.value) {
@@ -366,7 +539,98 @@ async function submitDeletePassphrase() {
     loading.value = false;
   }
 }
+ 
+function openEmailChange() {
+  error.value = '';
+  success.value = '';
+  newEmailInput.value = '';
+  codeOldInput.value = '';
+  codeNewInput.value = '';
+  inlineOldCode.value = '';
+  inlineNewCode.value = '';
+  emailChangeStep.value = 'new';
+  showEmailChangeModal.value = true;
+}
+
+async function startEmailChangeFlow() {
+  const email = (newEmailInput.value || '').trim();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    error.value = 'Enter a valid new email address';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    const resp = await startEmailChange(email);
+    inlineOldCode.value = resp?.codeOld || '';
+    emailChangeStep.value = 'verify-old';
+    if (inlineOldCode.value) {
+      success.value = `Dev mode: Code sent to current email is ${inlineOldCode.value}`;
+    } else {
+      success.value = 'A verification code has been sent to your current email.';
+    }
+  } catch (e) {
+    error.value = e.message || 'Failed to start email change';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function verifyOldEmailCode() {
+  const code = (codeOldInput.value || '').trim();
+  if (!code) {
+    error.value = 'Enter the code sent to your current email';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    const resp = await verifyEmailOld(code);
+    inlineNewCode.value = resp?.codeNew || '';
+    emailChangeStep.value = 'verify-new';
+    if (inlineNewCode.value) {
+      success.value = `Dev mode: Code sent to new email is ${inlineNewCode.value}`;
+    } else {
+      success.value = 'A verification code has been sent to your new email.';
+    }
+  } catch (e) {
+    error.value = e.message || 'Old email verification failed';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function verifyNewEmailCode() {
+  const code = (codeNewInput.value || '').trim();
+  if (!code) {
+    error.value = 'Enter the code sent to your new email';
+    return;
+  }
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  try {
+    await verifyEmailNew(code);
+    profileEmail.value = (newEmailInput.value || '').trim();
+    await updateProfile({ name: profileName.value, email: profileEmail.value, phone: profilePhone.value });
+    success.value = 'Email updated and verified.';
+    showEmailChangeModal.value = false;
+    newEmailInput.value = '';
+    codeOldInput.value = '';
+    codeNewInput.value = '';
+    inlineOldCode.value = '';
+    inlineNewCode.value = '';
+  } catch (e) {
+    error.value = e.message || 'New email verification failed';
+  } finally {
+    loading.value = false;
+  }
+}
+
 </script>
+
 
 
 <template>
@@ -379,7 +643,40 @@ async function submitDeletePassphrase() {
       <div v-if="error" class="error-message">{{ error }}</div>
       <div v-if="success" class="success-message">{{ success }}</div>
       
-      
+      <section class="profile-section">
+        <h2>User Profile</h2>
+        <form @submit.prevent="saveProfileNameEmail" class="update-form">
+          <label for="profileName">Name</label>
+          <div class="form-group">
+            <input type="text" id="profileName" v-model="profileName" placeholder="Your full name" />
+          </div>
+          <div class="form-group">
+            <label for="profileEmail">Email</label>
+            <div class="form-inline">
+              <input type="email" id="profileEmail" v-model="profileEmail" readonly placeholder="your@email.com" />
+              <button type="button" class="secondary-button" @click="openEmailChange">Change Email ID</button>
+            </div>
+          </div>
+          <div class="form-actions">
+            <button type="submit" :disabled="loading" class="submit-button">
+              {{ loading ? 'Saving...' : 'Save' }}
+            </button>
+          </div>
+          
+        </form>
+
+        <div class="update-form">
+          <div class="form-group">
+            <label for="profilePhone">Mobile Number</label>
+            <div class="form-inline">
+              <input type="tel" id="profilePhone" v-model="profilePhone" readonly placeholder="+1XXXXXXXXXX" />
+              <button type="button" class="secondary-button" @click="openPhoneChange">Change Mobile</button>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
       <div v-if="!vaultExists || !passphraseStored">
         <div class="actions-row">
           <button type="button" class="primary-button" @click="() => { setupStep = 'intro'; showPassphraseModal = true; }">Create Vault</button>
@@ -455,6 +752,98 @@ async function submitDeletePassphrase() {
       </div>
     </div>
   </div>
+  </div>
+  <div v-if="showEmailChangeModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span v-if="emailChangeStep==='new'">Change Email</span>
+          <span v-else-if="emailChangeStep==='verify-old'">Verify Current Email</span>
+          <span v-else>Verify New Email</span>
+        </div>
+        <button class="modal-close" @click="showEmailChangeModal = false">×</button>
+      </div>
+      <div class="modal-body">
+        <div v-if="emailChangeStep==='new'">
+          <div class="form-group">
+            <label for="newEmail">New Email</label>
+            <input id="newEmail" type="email" v-model="newEmailInput" placeholder="new@email.com" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showEmailChangeModal=false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="startEmailChangeFlow">{{ loading ? 'Working...' : 'Send Code to Current Email' }}</button>
+          </div>
+        </div>
+        <div v-else-if="emailChangeStep==='verify-old'">
+          <div v-if="inlineOldCode" class="info-inline">Dev code: {{ inlineOldCode }}</div>
+          <div class="form-group">
+            <label for="oldCode">Code from Current Email</label>
+            <input id="oldCode" type="text" v-model="codeOldInput" placeholder="Enter code" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showEmailChangeModal=false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="verifyOldEmailCode">{{ loading ? 'Verifying...' : 'Verify Current Email' }}</button>
+          </div>
+        </div>
+        <div v-else>
+          <div v-if="inlineNewCode" class="info-inline">Dev code: {{ inlineNewCode }}</div>
+          <div class="form-group">
+            <label for="newCode">Code from New Email</label>
+            <input id="newCode" type="text" v-model="codeNewInput" placeholder="Enter code" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showEmailChangeModal=false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="verifyNewEmailCode">{{ loading ? 'Updating…' : 'Verify New Email & Update' }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div v-if="showPhoneChangeModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span v-if="phoneChangeStep==='new'">Change Mobile Number</span>
+          <span v-else-if="phoneChangeStep==='verify-old'">Verify Current Mobile</span>
+          <span v-else>Verify New Mobile</span>
+        </div>
+        <button class="modal-close" @click="showPhoneChangeModal = false">×</button>
+      </div>
+      <div class="modal-body">
+        <div v-if="phoneChangeStep==='new'">
+          <div class="form-group">
+            <label for="newPhone">New Mobile Number</label>
+            <input id="newPhone" type="tel" v-model="newPhoneInput" placeholder="+1XXXXXXXXXX" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showPhoneChangeModal=false">Cancel</button>
+            <button class="primary-button" @click="setPhoneAndSendOtp">Send Code to Current Mobile</button>
+          </div>
+        </div>
+        <div v-else-if="phoneChangeStep==='verify-old'">
+          <div v-if="inlinePhoneOldCode" class="info-inline">Dev code: {{ inlinePhoneOldCode }}</div>
+          <div class="form-group">
+            <label for="oldPhoneCode">Code from Current Mobile</label>
+            <input id="oldPhoneCode" type="text" v-model="phoneOldCodeInput" placeholder="Enter code" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showPhoneChangeModal=false">Cancel</button>
+            <button class="primary-button" @click="verifyOldPhoneCode">Verify Current Mobile</button>
+          </div>
+        </div>
+        <div v-else>
+          <div v-if="inlinePhoneNewCode" class="info-inline">Dev code: {{ inlinePhoneNewCode }}</div>
+          <div class="form-group">
+            <label for="newPhoneCode">Code from New Mobile</label>
+            <input id="newPhoneCode" type="text" v-model="phoneNewCodeInput" placeholder="Enter code" />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showPhoneChangeModal=false">Cancel</button>
+            <button class="primary-button" @click="verifyNewPhoneCode">Verify New Mobile & Update</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
   <div v-if="showPassphraseModal" class="modal-backdrop">
     <div class="modal">
@@ -714,6 +1103,15 @@ li {
   border-radius: 6px;
   font-weight: 700;
   cursor: pointer;
+}
+.profile-section {
+  margin-bottom: 2rem;
+}
+.form-inline {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.5rem;
 }
 .modal-backdrop {
   position: fixed;

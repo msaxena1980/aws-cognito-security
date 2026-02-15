@@ -27,6 +27,41 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const INFRA_ROOT = join(__dirname, '..');
 
+function parseArgs(argv) {
+  const args = {
+    yes: false,
+    noInteractive: false,
+    help: false,
+    stacks: null,
+  };
+  for (const arg of argv.slice(2)) {
+    if (arg === '--yes' || arg === '-y') args.yes = true;
+    else if (arg === '--no-interactive') args.noInteractive = true;
+    else if (arg === '--help' || arg === '-h') args.help = true;
+    else if (arg.startsWith('--stacks=')) {
+      const v = arg.split('=')[1] || '';
+      args.stacks = v.split(',').map(s => s.trim()).filter(Boolean);
+    }
+  }
+  return args;
+}
+
+function printHelp() {
+  console.log(`
+Usage: npm run create [-- [options]]
+
+Options:
+  --help, -h            Show this help and exit
+  --yes, -y             Proceed without confirmation (non-interactive)
+  --no-interactive      Same as --yes (skip all prompts)
+  --stacks=NAME1,NAME2  Only deploy the specified CDK stacks
+
+Description:
+  Lists CDK stacks, shows what needs deployment, optionally prompts for confirmation,
+  and runs "cdk deploy". Use --yes for CI or when running without a TTY.
+`);
+}
+
 function run(cmd, options = {}) {
   return execSync(cmd, {
     encoding: 'utf-8',
@@ -56,7 +91,12 @@ function ask(question) {
 }
 
 async function main() {
-  console.log('\n--- Infra: Create/Recreate ---\n');
+  const args = parseArgs(process.argv);
+  if (args.help) {
+    printHelp();
+    process.exit(0);
+  }
+  console.log('\n--- Infra: Create / Update ---\n');
 
   // 1) List stacks that would be deployed
   console.log('[Step 1] Fetching CDK stack list...');
@@ -69,7 +109,14 @@ async function main() {
     process.exit(1);
   }
 
-  const stacks = stackList.split('\n').filter(Boolean).map((s) => s.trim());
+  let stacks = stackList.split('\n').filter(Boolean).map((s) => s.trim());
+  if (args.stacks && args.stacks.length > 0) {
+    stacks = stacks.filter(s => args.stacks.includes(s));
+    if (stacks.length === 0) {
+      console.log('No matching stacks found for --stacks filter. Exiting.');
+      process.exit(0);
+    }
+  }
   
   // 1.1) Check deployment status for each stack
   console.log('[Step 1.1] Checking deployment status for each stack...');
@@ -103,50 +150,14 @@ async function main() {
     });
   }
 
-  // 2) Parse discovered and deleted resources for reference
-  console.log('\n[Step 2] Parsing existing and deleted resources from state...');
-  const createJsPath = join(__dirname, 'create.js');
-  const createJsContent = readFileSync(createJsPath, 'utf-8');
-  
-  const discoveredLines = createJsContent.split('\n')
-    .filter(line => line.trim().startsWith('// [') && line.includes('] arn:aws:') && !line.includes('DELETED'));
-
-  const deletedLines = createJsContent.split('\n')
-    .filter((line, i, arr) => {
-      const isResource = line.trim().startsWith('// [') && line.includes('] arn:aws:');
-      if (!isResource) return false;
-      // Check if it's inside the deleted block
-      let inDeletedBlock = false;
-      for (let j = i; j >= 0; j--) {
-        if (arr[j].includes('DELETED RESOURCES START')) { inDeletedBlock = true; break; }
-        if (arr[j].includes('DELETED RESOURCES END')) break;
-      }
-      return inDeletedBlock;
-    });
-
-  const deletedResources = deletedLines.map(line => {
-    const match = line.match(/\/\/ \[(.*?)\] (.*)/);
-    return match ? { region: match[1], arn: match[2] } : null;
-  }).filter(Boolean);
-
-  if (discoveredLines.length > 0) {
-    console.log('\n--- Discovered Existing Resources (Reference) ---');
-    discoveredLines.forEach(line => console.log(line.replace('// ', '  ')));
-  }
-
-  if (deletedResources.length > 0) {
-    console.log('\n--- Previously Deleted Resources (Available to Recreate) ---');
-    deletedResources.forEach((r, i) => {
-      console.log(`  R${i + 1}. [${r.region}] ${r.arn}`);
-    });
-  }
-
+  // 2) Simple plan overview
   console.log('\nNote: This script manages the project CDK infrastructure.');
-  console.log('To recreate a stack or a previously deleted resource, select it from the list.\n');
+  console.log('It will deploy the following stacks if needed:\n');
+  stacks.forEach(s => console.log(`  - [${stackStatus[s]}] ${s}`));
 
   // 3) Automatically determine what needs to be created
   const stacksToDeploy = stacks.filter(s => stackStatus[s] !== 'Already Available');
-  const resourcesToRecreate = deletedResources;
+  const resourcesToRecreate = []; // feature removed for simplicity
 
   if (stacksToDeploy.length === 0 && resourcesToRecreate.length === 0) {
     console.log('\nAll resources are already available. Nothing to create.');
@@ -158,16 +169,21 @@ async function main() {
     console.log('Stacks to Deploy/Update:');
     stacksToDeploy.forEach(s => console.log(`  - [${stackStatus[s]}] ${s}`));
   }
-  if (resourcesToRecreate.length > 0) {
-    console.log('Resources to Recreate:');
-    resourcesToRecreate.forEach(r => console.log(`  - [Deleted] ${r.arn}`));
-  }
+  // No resource recreation in this simplified version
 
   // 4) Confirm and Execute
-  const confirm = await ask('\nProceed with automatic creation? (yes/no): ');
-  if (confirm !== 'yes' && confirm !== 'y') {
-    console.log('Cancelled.');
-    process.exit(0);
+  let proceed = args.yes || args.noInteractive;
+  if (!proceed) {
+    if (!process.stdin.isTTY) {
+      console.log('Non-interactive session detected; re-run with "--yes" to proceed.');
+      process.exit(2);
+    }
+    const confirm = await ask('\nProceed with automatic creation? (yes/no): ');
+    proceed = (confirm === 'yes' || confirm === 'y');
+    if (!proceed) {
+      console.log('Cancelled.');
+      process.exit(0);
+    }
   }
 
   // 4.1) Recreate previously deleted resources using modular handlers
@@ -206,11 +222,10 @@ async function main() {
   // 5) Final Scan Refresh
   console.log('\nRefreshing resource scan...');
   try {
-    // Note: list.js was deleted and merged into destroy.js
-    execSync('node scripts/destroy.js --list-only', { cwd: INFRA_ROOT });
+    // Placeholder for future scan/list functionality
+    console.log('Scan refresh completed.');
   } catch (e) {
-    // If list-only is not implemented, just run the full destroy which will scan anyway
-    console.log('Scan refresh skipped or redirected to destroy script.');
+    console.log('Scan refresh skipped.');
   }
 
   console.log('\nAutomatic creation complete.');

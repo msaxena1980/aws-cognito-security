@@ -27,7 +27,7 @@ export class InfraStack extends cdk.Stack {
       },
       mfa: cdk.aws_cognito.Mfa.OPTIONAL,
       mfaMethods: {
-        sms: true,
+        sms: false, // disable SMS in sandbox
         totp: true,
       },
       passwordPolicy: {
@@ -280,6 +280,99 @@ export class InfraStack extends cdk.Stack {
       authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
     });
     deleteResource.addResource('complete').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(accountLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+
+    // Profile endpoints (authenticated)
+    const profileLambda = new cdk.aws_lambda.Function(this, 'ProfileHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'profile.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+      },
+    });
+    table.grantReadWriteData(profileLambda);
+
+    const profileResource = api.root.addResource('profile');
+    profileResource.addMethod('GET', new cdk.aws_apigateway.LambdaIntegration(profileLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    profileResource.addMethod('PUT', new cdk.aws_apigateway.LambdaIntegration(profileLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+
+    // Phone verification (custom, sandbox-friendly)
+    const phoneLambda = new cdk.aws_lambda.Function(this, 'PhoneVerificationHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'phone.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+        USER_POOL_ID: userPool.userPoolId,
+        DEV_SMS_MODE: process.env.DEV_SMS_MODE ?? 'inline',
+        SES_SENDER_EMAIL: process.env.SES_SENDER_EMAIL ?? '',
+      },
+    });
+    table.grantReadWriteData(phoneLambda);
+    phoneLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['cognito-idp:AdminUpdateUserAttributes'],
+      resources: [userPool.userPoolArn],
+    }));
+    phoneLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: ['*'],
+    }));
+
+    const phoneRes = profileResource.addResource('phone');
+    phoneRes.addResource('start').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(phoneLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    phoneRes.addResource('verify-old').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(phoneLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    phoneRes.addResource('verify-new').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(phoneLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+
+    // Email change endpoints (authenticated)
+    const emailChangeLambda = new cdk.aws_lambda.Function(this, 'EmailChangeHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'emailChange.handler',
+      environment: {
+        TABLE_NAME: table.tableName,
+        USER_POOL_ID: userPool.userPoolId,
+        DEV_EMAIL_MODE: process.env.DEV_EMAIL_MODE ?? 'inline',
+        SES_SENDER_EMAIL: process.env.SES_SENDER_EMAIL ?? '',
+      },
+    });
+    table.grantReadWriteData(emailChangeLambda);
+    emailChangeLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['cognito-idp:AdminUpdateUserAttributes'],
+      resources: [userPool.userPoolArn],
+    }));
+    emailChangeLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: ['*'],
+    }));
+
+    const emailRes = profileResource.addResource('email');
+    emailRes.addResource('start').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(emailChangeLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    emailRes.addResource('verify-old').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(emailChangeLambda), {
+      authorizer,
+      authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
+    });
+    emailRes.addResource('verify-new').addMethod('POST', new cdk.aws_apigateway.LambdaIntegration(emailChangeLambda), {
       authorizer,
       authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO,
     });

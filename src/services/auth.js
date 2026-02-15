@@ -1,4 +1,4 @@
-import { signUp, confirmSignUp, resendSignUpCode, signIn, signOut, getCurrentUser, fetchAuthSession, resetPassword, confirmResetPassword, updatePassword } from 'aws-amplify/auth';
+import { signUp, confirmSignUp, resendSignUpCode, signIn, signOut, getCurrentUser, fetchAuthSession, resetPassword, confirmResetPassword, updatePassword, updateUserAttributes, sendUserAttributeVerificationCode, confirmUserAttribute } from 'aws-amplify/auth';
 import { get } from 'aws-amplify/api';
 import { reactive } from 'vue';
 
@@ -200,6 +200,70 @@ export async function handleUpdatePassword(oldPassword, newPassword) {
         await updatePassword({ oldPassword, newPassword });
     } catch (error) {
         console.error('Error updating password:', error);
+        throw error;
+    }
+}
+
+// Profile attribute management
+export async function updateNameEmail(name, email) {
+    try {
+        const attrs = {};
+        if (name !== undefined && name !== null) attrs.name = String(name);
+        if (email !== undefined && email !== null) attrs.email = String(email);
+        await updateUserAttributes({ userAttributes: attrs });
+        await checkAuth();
+    } catch (error) {
+        console.error('Error updating name/email:', error);
+        throw error;
+    }
+}
+
+export async function setPhoneNumber(phone) {
+    try {
+        await updateUserAttributes({ userAttributes: { phone_number: String(phone) } });
+        await checkAuth();
+    } catch (error) {
+        console.error('Error setting phone number:', error);
+        throw error;
+    }
+}
+
+export async function sendPhoneOtp() {
+    try {
+        const res = await sendUserAttributeVerificationCode({ userAttributeKey: 'phone_number' });
+        return res;
+    } catch (error) {
+        console.error('Error sending phone OTP:', error);
+        throw error;
+    }
+}
+
+export async function confirmPhoneOtp(code) {
+    try {
+        await confirmUserAttribute({ userAttributeKey: 'phone_number', confirmationCode: code });
+        await checkAuth();
+    } catch (error) {
+        console.error('Error confirming phone OTP:', error);
+        throw error;
+    }
+}
+
+export async function sendEmailOtp() {
+    try {
+        const res = await sendUserAttributeVerificationCode({ userAttributeKey: 'email' });
+        return res;
+    } catch (error) {
+        console.error('Error sending email OTP:', error);
+        throw error;
+    }
+}
+
+export async function confirmEmailOtp(code) {
+    try {
+        await confirmUserAttribute({ userAttributeKey: 'email', confirmationCode: code });
+        await checkAuth();
+    } catch (error) {
+        console.error('Error confirming email OTP:', error);
         throw error;
     }
 }
