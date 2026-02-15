@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp } from '../services/auth';
 import { getProfile, updateProfile, startPhoneChange, verifyPhoneOld, verifyPhoneNew, startEmailChange, verifyEmailOld, verifyEmailNew } from '../services/profile';
@@ -32,6 +32,7 @@ const showPassphraseModal = ref(false);
 const profileName = ref('');
 const profileEmail = ref('');
 const profilePhone = ref('');
+const originalProfileName = ref('');
 const phoneOtpSent = ref(false);
 const phoneOtpCode = ref('');
 const emailOtpSent = ref(false);
@@ -61,6 +62,7 @@ onMounted(async () => {
     try {
       const prof = await getProfile();
       profileName.value = prof.name || '';
+      originalProfileName.value = profileName.value;
       profileEmail.value = prof.email || authState.user?.signInDetails?.loginId || '';
       profilePhone.value = prof.phone || '';
     } catch (e) {
@@ -77,13 +79,19 @@ onMounted(async () => {
   }
 });
 
+const canSaveName = computed(() => {
+  const current = (profileName.value || '').trim();
+  const original = (originalProfileName.value || '').trim();
+  return current.length > 0 && current !== original;
+});
+
 async function saveProfileNameEmail() {
   loading.value = true;
   error.value = '';
   success.value = '';
   try {
     await updateNameEmail(profileName.value, undefined);
-    await updateProfile({ name: profileName.value });
+    originalProfileName.value = (profileName.value || '').trim();
     success.value = 'Name updated.';
   } catch (e) {
     error.value = e.message || 'Failed to update profile';
@@ -646,35 +654,27 @@ async function verifyNewEmailCode() {
       <section class="profile-section">
         <h2>User Profile</h2>
         <form @submit.prevent="saveProfileNameEmail" class="update-form">
-          <label for="profileName">Name</label>
-          <div class="form-group">
+          <div class="form-group form-inline">
+            <label for="profileName">Name</label>
             <input type="text" id="profileName" v-model="profileName" placeholder="Your full name" />
           </div>
-          <div class="form-group">
+          <div class="form-group form-inline">
             <label for="profileEmail">Email</label>
-            <div class="form-inline">
-              <input type="email" id="profileEmail" v-model="profileEmail" readonly placeholder="your@email.com" />
-              <button type="button" class="secondary-button" @click="openEmailChange">Change Email ID</button>
-            </div>
+            <input type="email" id="profileEmail" v-model="profileEmail" readonly placeholder="your@email.com" />
+            <button type="button" class="secondary-button" @click="openEmailChange">Change Email ID</button>
+          </div>
+          <div class="form-group form-inline">
+            <label for="profilePhone">Mobile Number</label>
+            <input type="tel" id="profilePhone" v-model="profilePhone" readonly placeholder="+1XXXXXXXXXX" />
+            <button type="button" class="secondary-button" @click="openPhoneChange">Change Mobile</button>
           </div>
           <div class="form-actions">
-            <button type="submit" :disabled="loading" class="submit-button">
+            <button type="submit" :disabled="loading || !canSaveName" class="submit-button">
               {{ loading ? 'Saving...' : 'Save' }}
             </button>
           </div>
           
         </form>
-
-        <div class="update-form">
-          <div class="form-group">
-            <label for="profilePhone">Mobile Number</label>
-            <div class="form-inline">
-              <input type="tel" id="profilePhone" v-model="profilePhone" readonly placeholder="+1XXXXXXXXXX" />
-              <button type="button" class="secondary-button" @click="openPhoneChange">Change Mobile</button>
-            </div>
-          </div>
-
-        </div>
       </section>
 
       <div v-if="!vaultExists || !passphraseStored">
@@ -1112,6 +1112,15 @@ li {
   gap: 0.75rem;
   align-items: center;
   margin-top: 0.5rem;
+}
+.form-inline > label {
+  min-width: 140px;
+  font-weight: 600;
+}
+.form-inline input[type="text"],
+.form-inline input[type="email"],
+.form-inline input[type="tel"] {
+  flex: 1;
 }
 .modal-backdrop {
   position: fixed;
