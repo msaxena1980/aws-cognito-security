@@ -1,9 +1,9 @@
 {
   "InfraStack": {
-    "UserPoolClientId": "3l83142fip72bia45m51tcvlst",
-    "AuthApiEndpointF49088BF": "https://dhubvtb9v0.execute-api.us-east-1.amazonaws.com/prod/",
-    "UserPoolId": "us-east-1_II8PghpQq",
-    "ApiUrl": "https://dhubvtb9v0.execute-api.us-east-1.amazonaws.com/prod/",
+    "UserPoolClientId": "22pvo6tk0vu8a2hc6rruo0nd6b",
+    "AuthApiEndpointF49088BF": "https://bhg1htynrg.execute-api.us-east-1.amazonaws.com/prod/",
+    "UserPoolId": "us-east-1_8ugGRj8V6",
+    "ApiUrl": "https://bhg1htynrg.execute-api.us-east-1.amazonaws.com/prod/",
     "Region": "us-east-1"
   }
 }

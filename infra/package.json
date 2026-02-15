@@ -6,8 +6,8 @@
   "description": "CDK infrastructure (create/list/destroy with confirmation)",
   "scripts": {
     "cdk": "cdk",
-    "create": "node scripts/create.js",
-    "destroy": "node scripts/destroy.js",
+    "create": "node create.js",
+    "destroy": "node destroy.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "dependencies": {
@@ -15,9 +15,12 @@
     "constructs": "^10.4.2"
   },
   "devDependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.990.0",
     "@aws-sdk/client-dynamodb": "^3.990.0",
+    "@aws-sdk/client-secrets-manager": "^3.990.0",
     "@aws-sdk/client-ses": "^3.990.0",
     "@aws-sdk/lib-dynamodb": "^3.990.0",
+    "@types/node": "^20.11.0",
     "aws-sdk-client-mock": "^4.1.0",
     "jest": "^30.2.0"
   },

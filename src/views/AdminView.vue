@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import OtpInput from '../components/OtpInput.vue';
-import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp, handleSignIn, getMfaStatus, startTotpSetup, completeTotpSetup, disableTotpMfa } from '../services/auth';
+import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp, handleSignIn, getMfaStatus, startTotpSetup, completeTotpSetup, disableTotpMfa, verifyCredentials } from '../services/auth';
 import { getProfile, updateProfile, startPhoneChange, verifyPhoneOld, verifyPhoneNew, startEmailChange, verifyEmailOld, verifyEmailNew } from '../services/profile';
 import { getVaultMetadata, createEncryptedVaultPackage, saveVaultPackage, changePassphrase as rewrapPassphrase, generatePassphrase, saveEncryptedPassphrase, getPassphraseStatus, verifyPassphrase } from '../services/vault';
 import { completeAccountDeletion, startDeleteOtp, verifyDeleteOtp } from '../services/account';
@@ -54,6 +54,8 @@ const totpQrDataUrl = ref('');
 const totpCodeInput = ref('');
 const disableTotpCodeInput = ref('');
 const disablePasswordInput = ref('');
+const disableTotpStep = ref('password'); // 'password' | 'totp'
+const verifiedPassword = ref(''); // Store password temporarily for TOTP verification
 
 // Email change flow
 const showEmailChangeModal = ref(false);
@@ -142,6 +144,7 @@ async function saveProfileNameEmail() {
   success.value = '';
   try {
     await updateNameEmail(profileName.value, undefined);
+    await updateProfile({ name: profileName.value, email: profileEmail.value, phone: profilePhone.value });
     originalProfileName.value = (profileName.value || '').trim();
     success.value = 'Profile updated.';
   } catch (e) {
@@ -354,13 +357,18 @@ function backToShow() {
   setupStep.value = 'show';
 }
 
-function verifyWordAndSave() {
+async function verifyWordAndSave() {
   const expected = generatedWords.value[confirmIndex.value];
   if ((confirmInput.value || '').trim().toLowerCase() !== expected.toLowerCase()) {
-    error.value = `Please enter the ${confirmIndex.value + 1} word correctly`;
+    const ordinal = (n) => {
+      const s = ['th', 'st', 'nd', 'rd'];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
+    error.value = `Please enter the ${ordinal(confirmIndex.value + 1)} word correctly`;
     return;
   }
-  setupPassphrase();
+  await setupPassphrase();
 }
 
 async function initiatePasswordReset() {
@@ -452,7 +460,12 @@ function backToShowNew() {
 async function finalizeChange() {
   const expected = newWords.value[confirmIndexChange.value];
   if ((confirmInputChange.value || '').trim().toLowerCase() !== expected.toLowerCase()) {
-    error.value = `Please enter the ${confirmIndexChange.value + 1} word correctly`;
+    const ordinal = (n) => {
+      const s = ['th', 'st', 'nd', 'rd'];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
+    error.value = `Please enter the ${ordinal(confirmIndexChange.value + 1)} word correctly`;
     return;
   }
   loading.value = true;
@@ -814,6 +827,8 @@ function enable2FA() {
   totpCodeInput.value = '';
   disableTotpCodeInput.value = '';
   disablePasswordInput.value = '';
+  verifiedPassword.value = ''; // Clear stored password
+  disableTotpStep.value = 'password';
   if (!isTwoFAEnabled.value) {
     twoFAStep.value = 'download';
     showTwoFAModal.value = true;
@@ -886,21 +901,67 @@ async function confirmTotpSetup() {
   }
 }
 
-async function confirmDisableTwoFA() {
-  const raw = (disableTotpCodeInput.value || '').trim();
-  const code = raw.replace(/\D/g, '');
+async function verifyPasswordStep() {
   const pwd = (disablePasswordInput.value || '').trim();
-  if (!code || code.length !== 6 || !pwd) {
-    error.value = 'Enter the 6-digit code and your password to disable 2FA';
+  
+  if (!pwd) {
+    error.value = 'Enter your password';
     return;
   }
+  
   loading.value = true;
   error.value = '';
   success.value = '';
+  
   try {
+    // Verify password only (no TOTP code yet)
+    await verifyCredentials(currentEmail.value, pwd, null);
+    
+    // Store password temporarily for TOTP verification step
+    verifiedPassword.value = pwd;
+    
+    // Password verified, move to TOTP step
+    disableTotpStep.value = 'totp';
+    success.value = 'Password verified. Now enter your 2FA code.';
+    disablePasswordInput.value = ''; // Clear input field for security
+  } catch (e) {
+    console.error('Password verification failed:', e);
+    if (e?.statusCode === 401 || e?.field === 'password') {
+      error.value = 'Incorrect password';
+    } else if (e?.name === 'NotAuthorizedException' || e?.message?.toLowerCase().includes('incorrect')) {
+      error.value = 'Incorrect password';
+    } else {
+      error.value = e.message || 'Password verification failed';
+    }
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function confirmDisableTwoFA() {
+  const raw = (disableTotpCodeInput.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  
+  if (!code || code.length !== 6) {
+    error.value = 'Enter the 6-digit code from your authenticator app';
+    return;
+  }
+  
+  loading.value = true;
+  error.value = '';
+  success.value = '';
+  
+  try {
+    // Verify TOTP code with the stored password
+    await verifyCredentials(currentEmail.value, verifiedPassword.value, code);
+    
+    // Both password and TOTP verified, now disable 2FA
     await disableTotpMfa();
+    
+    // Update state
     isTwoFAEnabled.value = false;
     hasTwoFAProfile.value = false;
+    
     try {
       await updateProfile({
         name: profileName.value,
@@ -911,13 +972,32 @@ async function confirmDisableTwoFA() {
     } catch (profileErr) {
       console.warn('Failed to persist 2FA disabled status to profile:', profileErr);
     }
-    success.value = 'Two-factor authentication disabled.';
+    
+    success.value = 'Two-factor authentication disabled successfully. You are still logged in.';
     showTwoFAModal.value = false;
+    disableTotpCodeInput.value = '';
+    disablePasswordInput.value = '';
+    verifiedPassword.value = ''; // Clear stored password
+    disableTotpStep.value = 'password';
   } catch (e) {
-    error.value = e.message || 'Failed to disable 2FA';
+    console.error('Error disabling 2FA:', e);
+    if (e?.statusCode === 401 || e?.field === 'totpCode') {
+      error.value = 'Incorrect 2FA code. Please try again.';
+    } else if (e?.name === 'CodeMismatchException') {
+      error.value = 'Incorrect 2FA code. Please try again.';
+    } else {
+      error.value = e.message || 'Failed to disable 2FA';
+    }
   } finally {
     loading.value = false;
   }
+}
+
+function backToPasswordStep() {
+  disableTotpStep.value = 'password';
+  verifiedPassword.value = ''; // Clear stored password
+  error.value = '';
+  success.value = '';
 }
 
 async function registerPasskey() {
@@ -1350,27 +1430,42 @@ async function registerPasskey() {
           </div>
         </div>
         <div v-else>
-          <h2 class="twofa-step-title">Disable 2FA</h2>
-          <p class="twofa-step-subtitle">Input the 6-digit code in your Google Authenticator app</p>
-          <OtpInput
-            v-model="disableTotpCodeInput"
-            :length="6"
-            wrapper-class="code-input-row"
-            input-class="code-input-box"
-          />
-          <div class="form-group">
-            <label for="disablePassword">Password</label>
-            <input
-              id="disablePassword"
-              type="password"
-              v-model="disablePasswordInput"
-            />
+          <div v-if="disableTotpStep === 'password'">
+            <h2 class="twofa-step-title">Disable 2FA - Step 1</h2>
+            <p class="twofa-step-subtitle">Enter your password to continue</p>
+            <div class="form-group">
+              <label for="disablePassword">Password</label>
+              <input
+                id="disablePassword"
+                type="password"
+                v-model="disablePasswordInput"
+                placeholder="Enter your password"
+                @keyup.enter="verifyPasswordStep"
+              />
+            </div>
+            <div class="modal-actions">
+              <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
+              <button class="primary-button" :disabled="loading" @click="verifyPasswordStep">
+                {{ loading ? 'Verifying...' : 'Next' }}
+              </button>
+            </div>
           </div>
-          <div class="modal-actions">
-            <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
-            <button class="primary-button" :disabled="loading" @click="confirmDisableTwoFA">
-              {{ loading ? 'Disabling...' : 'Disable 2FA' }}
-            </button>
+          <div v-else>
+            <h2 class="twofa-step-title">Disable 2FA - Step 2</h2>
+            <p class="twofa-step-subtitle">Enter the 6-digit code from your Google Authenticator app</p>
+            <OtpInput
+              v-model="disableTotpCodeInput"
+              :length="6"
+              :autofocus="true"
+              wrapper-class="code-input-row"
+              input-class="code-input-box"
+            />
+            <div class="modal-actions">
+              <button class="secondary-button" @click="backToPasswordStep">Back</button>
+              <button class="primary-button" :disabled="loading" @click="confirmDisableTwoFA">
+                {{ loading ? 'Disabling...' : 'Disable 2FA' }}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1666,6 +1761,14 @@ li {
   display: flex;
   gap: .75rem;
   align-items: center;
+}
+.field-inline input[type="text"] {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-background);
+  color: var(--color-text);
 }
 .id-row {
   display: flex;

@@ -1,5 +1,5 @@
 import { signUp, confirmSignUp, resendSignUpCode, signIn, signOut, getCurrentUser, fetchAuthSession, resetPassword, confirmResetPassword, updatePassword, updateUserAttributes, sendUserAttributeVerificationCode, confirmUserAttribute, fetchMFAPreference, setUpTOTP, verifyTOTPSetup, updateMFAPreference, confirmSignIn } from 'aws-amplify/auth';
-import { get } from 'aws-amplify/api';
+import { get, post } from 'aws-amplify/api';
 import { reactive } from 'vue';
 
 export const authState = reactive({
@@ -338,6 +338,46 @@ export async function disableTotpMfa() {
         await checkAuth();
     } catch (error) {
         console.error('Error disabling TOTP MFA:', error);
+        throw error;
+    }
+}
+
+export async function verifyCredentials(email, password, totpCode) {
+    try {
+        const restOperation = post({
+            apiName: 'AuthApi',
+            path: '/verify-credentials',
+            options: {
+                body: {
+                    email,
+                    password,
+                    totpCode: totpCode || null
+                }
+            }
+        });
+        const response = await restOperation.response;
+        const body = await response.body.json();
+        return body;
+    } catch (error) {
+        console.error('Error verifying credentials:', error);
+        
+        // Handle Amplify API errors
+        if (error.response) {
+            try {
+                const errorBody = await error.response.body.json();
+                const err = new Error(errorBody.message || 'Verification failed');
+                err.field = errorBody.field;
+                err.statusCode = error.response.statusCode;
+                throw err;
+            } catch (parseError) {
+                // If parsing fails, throw original error with status code
+                const err = new Error('Verification failed');
+                err.statusCode = error.response.statusCode;
+                throw err;
+            }
+        }
+        
+        // For other errors, throw as is
         throw error;
     }
 }

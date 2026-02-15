@@ -1,8 +1,8 @@
 const awsmobile = {
     "aws_project_region": "us-east-1",
     "aws_cognito_region": "us-east-1",
-    "aws_user_pools_id": "us-east-1_II8PghpQq",
-    "aws_user_pools_web_client_id": "3l83142fip72bia45m51tcvlst",
+    "aws_user_pools_id": "us-east-1_8ugGRj8V6",
+    "aws_user_pools_web_client_id": "22pvo6tk0vu8a2hc6rruo0nd6b",
     "oauth": {},
     "aws_cognito_username_attributes": [
         "EMAIL"
@@ -28,7 +28,7 @@ const awsmobile = {
     "aws_cloud_logic_custom": [
         {
             "name": "AuthApi",
-            "endpoint": "https://dhubvtb9v0.execute-api.us-east-1.amazonaws.com/prod",
+            "endpoint": "https://bhg1htynrg.execute-api.us-east-1.amazonaws.com/prod",
             "region": "us-east-1"
         }
     ]

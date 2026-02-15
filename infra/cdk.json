@@ -1,5 +1,5 @@
 {
-  "app": "node bin/app.js",
+  "app": "node stack.js",
   "watch": {
     "include": ["**"],
     "exclude": [
