@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { handleResetPassword, handleSignIn } from '../services/auth';
+import OtpInput from '../components/OtpInput.vue';
 
 const email = ref('');
 const code = ref('');
@@ -25,11 +26,19 @@ async function resetPassword() {
     return;
   }
 
+  const raw = (code.value || '').trim();
+  const digits = raw.replace(/\D/g, '');
+  if (!digits || digits.length !== 6) {
+    error.value = 'Enter the 6-digit code sent to your email';
+    return;
+  }
+  code.value = digits;
+
   loading.value = true;
   error.value = '';
   success.value = '';
   try {
-    await handleResetPassword(email.value, code.value, newPassword.value);
+    await handleResetPassword(email.value, digits, newPassword.value);
     success.value = 'Password reset successfully! Logging you in...';
     
     try {
@@ -67,7 +76,11 @@ async function resetPassword() {
       </div>
       <div class="form-group">
         <label for="code">Verification Code</label>
-        <input type="text" id="code" v-model="code" required />
+        <OtpInput
+          id="code"
+          v-model="code"
+          :length="6"
+        />
       </div>
       <div class="form-group">
         <label for="newPassword">New Password</label>

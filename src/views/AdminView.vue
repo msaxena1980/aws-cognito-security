@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import OtpInput from '../components/OtpInput.vue';
 import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, updateNameEmail, sendEmailOtp, confirmEmailOtp, handleSignIn, getMfaStatus, startTotpSetup, completeTotpSetup, disableTotpMfa } from '../services/auth';
 import { getProfile, updateProfile, startPhoneChange, verifyPhoneOld, verifyPhoneNew, startEmailChange, verifyEmailOld, verifyEmailNew } from '../services/profile';
 import { getVaultMetadata, createEncryptedVaultPackage, saveVaultPackage, changePassphrase as rewrapPassphrase, generatePassphrase, saveEncryptedPassphrase, getPassphraseStatus, verifyPassphrase } from '../services/vault';
@@ -46,11 +47,13 @@ const currentEmail = computed(() => authState.user?.signInDetails?.loginId || pr
 
 const isTwoFAEnabled = ref(false);
 const showTwoFAModal = ref(false);
-const twoFAStep = ref('intro');
+const twoFAStep = ref('download');
 const totpSecret = ref('');
 const totpUri = ref('');
 const totpQrDataUrl = ref('');
 const totpCodeInput = ref('');
+const disableTotpCodeInput = ref('');
+const disablePasswordInput = ref('');
 
 // Email change flow
 const showEmailChangeModal = ref(false);
@@ -140,7 +143,7 @@ async function saveProfileNameEmail() {
   try {
     await updateNameEmail(profileName.value, undefined);
     originalProfileName.value = (profileName.value || '').trim();
-    success.value = 'Name updated.';
+    success.value = 'Profile updated.';
   } catch (e) {
     error.value = e.message || 'Failed to update profile';
   } finally {
@@ -183,9 +186,10 @@ async function setPhoneAndSendOtp() {
 }
 
 async function verifyOldPhoneCode() {
-  const code = (phoneOldCodeInput.value || '').trim();
-  if (!code) {
-    error.value = 'Enter the code sent to your current mobile';
+  const raw = (phoneOldCodeInput.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  if (!code || code.length !== 6) {
+    error.value = 'Enter the 6-digit code sent to your current mobile';
     return;
   }
   loading.value = true;
@@ -206,9 +210,10 @@ async function verifyOldPhoneCode() {
 }
 
 async function verifyNewPhoneCode() {
-  const code = (phoneNewCodeInput.value || '').trim();
-  if (!code) {
-    error.value = 'Enter the code sent to your new mobile';
+  const raw = (phoneNewCodeInput.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  if (!code || code.length !== 6) {
+    error.value = 'Enter the 6-digit code sent to your new mobile';
     return;
   }
   loading.value = true;
@@ -249,15 +254,17 @@ async function sendEmailCode() {
 }
 
 async function confirmEmail() {
-  if (!emailOtpCode.value) {
-    error.value = 'Enter the email code';
+  const raw = (emailOtpCode.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  if (!code || code.length !== 6) {
+    error.value = 'Enter the 6-digit code sent to your email';
     return;
   }
   loading.value = true;
   error.value = '';
   success.value = '';
   try {
-    await confirmEmailOtp(emailOtpCode.value);
+    await confirmEmailOtp(code);
     await updateProfile({ name: profileName.value, email: profileEmail.value, phone: profilePhone.value });
     success.value = 'Email verified.';
     emailOtpSent.value = false;
@@ -606,9 +613,10 @@ async function confirmDeleteWarning() {
 }
 
 async function submitDeleteOtp() {
-  const code = (deleteOtpCode.value || '').trim();
-  if (!code) {
-    error.value = 'Enter the code sent to your email';
+  const raw = (deleteOtpCode.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  if (!code || code.length !== 6) {
+    error.value = 'Enter the 6-digit code sent to your email';
     return;
   }
   loading.value = true;
@@ -740,9 +748,10 @@ async function startEmailChangeFlow() {
 }
 
 async function verifyOldEmailCode() {
-  const code = (codeOldInput.value || '').trim();
-  if (!code) {
-    error.value = 'Enter the code sent to your current email';
+  const raw = (codeOldInput.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  if (!code || code.length !== 6) {
+    error.value = 'Enter the 6-digit code sent to your current email';
     return;
   }
   loading.value = true;
@@ -765,9 +774,10 @@ async function verifyOldEmailCode() {
 }
 
 async function verifyNewEmailCode() {
-  const code = (codeNewInput.value || '').trim();
-  if (!code) {
-    error.value = 'Enter the code sent to your new email';
+  const raw = (codeNewInput.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  if (!code || code.length !== 6) {
+    error.value = 'Enter the 6-digit code sent to your new email';
     return;
   }
   loading.value = true;
@@ -802,11 +812,13 @@ function enable2FA() {
   totpSecret.value = '';
   totpUri.value = '';
   totpCodeInput.value = '';
+  disableTotpCodeInput.value = '';
+  disablePasswordInput.value = '';
   if (!isTwoFAEnabled.value) {
-    twoFAStep.value = 'intro';
+    twoFAStep.value = 'download';
     showTwoFAModal.value = true;
   } else {
-    twoFAStep.value = 'disable-confirm';
+    twoFAStep.value = 'disable';
     showTwoFAModal.value = true;
   }
 }
@@ -825,7 +837,7 @@ async function beginTotpSetupFlow() {
       console.warn('QR code generation failed:', qrErr);
       totpQrDataUrl.value = '';
     }
-    twoFAStep.value = 'show';
+    twoFAStep.value = 'scan';
   } catch (e) {
     error.value = e.message || 'Failed to start 2FA setup';
   } finally {
@@ -833,14 +845,19 @@ async function beginTotpSetupFlow() {
   }
 }
 
-function goToVerifyTotp() {
-  twoFAStep.value = 'verify';
+function goToBackupStep() {
+  twoFAStep.value = 'backup';
+}
+
+function goToEnableCodeStep() {
+  twoFAStep.value = 'enable';
 }
 
 async function confirmTotpSetup() {
-  const code = (totpCodeInput.value || '').trim();
-  if (!code) {
-    error.value = 'Enter the code from your authenticator app';
+  const raw = (totpCodeInput.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  if (!code || code.length !== 6) {
+    error.value = 'Enter the 6-digit code from your authenticator app';
     return;
   }
   loading.value = true;
@@ -870,6 +887,13 @@ async function confirmTotpSetup() {
 }
 
 async function confirmDisableTwoFA() {
+  const raw = (disableTotpCodeInput.value || '').trim();
+  const code = raw.replace(/\D/g, '');
+  const pwd = (disablePasswordInput.value || '').trim();
+  if (!code || code.length !== 6 || !pwd) {
+    error.value = 'Enter the 6-digit code and your password to disable 2FA';
+    return;
+  }
   loading.value = true;
   error.value = '';
   success.value = '';
@@ -938,7 +962,7 @@ async function registerPasskey() {
           <div class="profile-fields">
             <div class="field-row">
               <div class="field-inline">
-                <input type="text" id="profileName" v-model="profileName" placeholder="Your full name" />
+                <input type="text" id="profileName" v-model="profileName" placeholder="Add Your Name" />
                 <button type="button" class="primary-button" :disabled="loading || !canSaveName" @click="saveProfileNameEmail">
                   {{ loading ? 'Saving...' : 'Save' }}
                 </button>
@@ -970,7 +994,8 @@ async function registerPasskey() {
             <div class="feature-title">Mobile Number</div>
             <div class="feature-sub">Current: {{ profilePhone || 'Not set' }}</div>
           </div>
-          <button class="primary-button" @click="openPhoneChange">Change Mobile</button>
+          <button v-if="profilePhone" class="primary-button" @click="openPhoneChange">Change Mobile</button>
+          <button v-else class="primary-button" @click="openPhoneChange">Add Mobile</button>
         </div>
       </section>
 
@@ -1060,7 +1085,11 @@ async function registerPasskey() {
           <div v-if="inlineDeleteCode" class="info-inline">Dev code: {{ inlineDeleteCode }}</div>
           <div class="form-group">
             <label for="delCode">Code from Email</label>
-            <input id="delCode" type="text" v-model="deleteOtpCode" placeholder="Enter code" />
+            <OtpInput
+              id="delCode"
+              v-model="deleteOtpCode"
+              :length="6"
+            />
           </div>
           <div class="modal-actions">
             <button class="secondary-button" @click="showDeleteModal=false">Cancel</button>
@@ -1144,7 +1173,11 @@ async function registerPasskey() {
           <div v-if="inlineOldCode" class="info-inline">Dev code: {{ inlineOldCode }}</div>
           <div class="form-group">
             <label for="oldCode">Code from Current Email</label>
-            <input id="oldCode" type="text" v-model="codeOldInput" placeholder="Enter code" />
+            <OtpInput
+              id="oldCode"
+              v-model="codeOldInput"
+              :length="6"
+            />
           </div>
           <div class="modal-actions">
             <button class="secondary-button" @click="showEmailChangeModal=false">Cancel</button>
@@ -1155,7 +1188,11 @@ async function registerPasskey() {
           <div v-if="inlineNewCode" class="info-inline">Dev code: {{ inlineNewCode }}</div>
           <div class="form-group">
             <label for="newCode">Code from New Email</label>
-            <input id="newCode" type="text" v-model="codeNewInput" placeholder="Enter code" />
+            <OtpInput
+              id="newCode"
+              v-model="codeNewInput"
+              :length="6"
+            />
           </div>
           <div class="modal-actions">
             <button class="secondary-button" @click="showEmailChangeModal=false">Cancel</button>
@@ -1190,7 +1227,11 @@ async function registerPasskey() {
           <div v-if="inlinePhoneOldCode" class="info-inline">Dev code: {{ inlinePhoneOldCode }}</div>
           <div class="form-group">
             <label for="oldPhoneCode">Code from Current Mobile</label>
-            <input id="oldPhoneCode" type="text" v-model="phoneOldCodeInput" placeholder="Enter code" />
+            <OtpInput
+              id="oldPhoneCode"
+              v-model="phoneOldCodeInput"
+              :length="6"
+            />
           </div>
           <div class="modal-actions">
             <button class="secondary-button" @click="showPhoneChangeModal=false">Cancel</button>
@@ -1201,7 +1242,11 @@ async function registerPasskey() {
           <div v-if="inlinePhoneNewCode" class="info-inline">Dev code: {{ inlinePhoneNewCode }}</div>
           <div class="form-group">
             <label for="newPhoneCode">Code from New Mobile</label>
-            <input id="newPhoneCode" type="text" v-model="phoneNewCodeInput" placeholder="Enter code" />
+            <OtpInput
+              id="newPhoneCode"
+              v-model="phoneNewCodeInput"
+              :length="6"
+            />
           </div>
           <div class="modal-actions">
             <button class="secondary-button" @click="showPhoneChangeModal=false">Cancel</button>
@@ -1215,123 +1260,117 @@ async function registerPasskey() {
     <div class="modal">
       <div class="modal-header">
         <div class="modal-title">
-          <span v-if="twoFAStep === 'intro' && !isTwoFAEnabled">Enable 2FA</span>
-          <span v-else-if="twoFAStep === 'show'">Set up authenticator app</span>
-          <span v-else-if="twoFAStep === 'verify'">Verify 2FA code</span>
-          <span v-else-if="twoFAStep === 'disable-confirm'">Disable 2FA</span>
-          <span v-else>Verify email</span>
+          <span>Google authenticator</span>
         </div>
         <button class="modal-close" @click="showTwoFAModal = false">×</button>
       </div>
       <div class="modal-body">
-        <div v-if="twoFAStep === 'intro'">
-          <div class="callout">
-            <div class="callout-title">Use an authenticator app</div>
-            <div class="callout-text">
-              Step 1: Download and install an authenticator app such as Google Authenticator or Microsoft Authenticator on your phone.
-            </div>
+        <div v-if="twoFAStep !== 'disable'">
+          <div class="twofa-tabs">
+            <div class="twofa-tab" :class="{ active: twoFAStep === 'download' }">Download App</div>
+            <div class="twofa-tab" :class="{ active: twoFAStep === 'scan' }">Scan QR Code</div>
+            <div class="twofa-tab" :class="{ active: twoFAStep === 'backup' }">Backup Key</div>
+            <div class="twofa-tab" :class="{ active: twoFAStep === 'enable' }">Enable 2FA</div>
           </div>
-          <div class="auth-app-grid">
-            <div class="auth-app-card">
-              <div class="auth-app-name">Google Authenticator</div>
-              <div class="auth-app-stores">
+          <div class="twofa-step-body">
+            <div v-if="twoFAStep === 'download'">
+              <h2 class="twofa-step-title">Step 1</h2>
+              <p class="twofa-step-subtitle">Download and install the Google Authenticator app</p>
+              <div class="store-buttons-row">
                 <a
-                  class="store-button"
+                  class="store-pill"
                   href="https://apps.apple.com/app/google-authenticator/id388497605"
                   target="_blank"
                   rel="noopener"
                 >
-                  App Store
+                  <span class="store-pill-label">Download on</span>
+                  <span class="store-pill-name">App Store</span>
                 </a>
                 <a
-                  class="store-button"
+                  class="store-pill"
                   href="https://play.google.com/store/apps/details?id=com.google.android.apps.authenticator2"
                   target="_blank"
                   rel="noopener"
                 >
-                  Google Play
+                  <span class="store-pill-label">Download on</span>
+                  <span class="store-pill-name">Google Play</span>
                 </a>
               </div>
+              <div class="modal-actions">
+                <button class="primary-button" :disabled="loading" @click="beginTotpSetupFlow">
+                  {{ loading ? 'Starting...' : 'Next step' }}
+                </button>
+              </div>
             </div>
-            <div class="auth-app-card">
-              <div class="auth-app-name">Microsoft Authenticator</div>
-              <div class="auth-app-stores">
-                <a
-                  class="store-button"
-                  href="https://apps.apple.com/app/microsoft-authenticator/id983156458"
-                  target="_blank"
-                  rel="noopener"
-                >
-                  App Store
-                </a>
-                <a
-                  class="store-button"
-                  href="https://play.google.com/store/apps/details?id=com.azure.authenticator"
-                  target="_blank"
-                  rel="noopener"
-                >
-                  Google Play
-                </a>
+            <div v-else-if="twoFAStep === 'scan'">
+              <h2 class="twofa-step-title">Step 2</h2>
+              <p class="twofa-step-subtitle">Scan this QR code in the Google Authenticator app</p>
+              <div v-if="totpQrDataUrl" class="qr-wrapper">
+                <img :src="totpQrDataUrl" alt="Authenticator QR code" class="qr-image" />
+              </div>
+              <p class="twofa-inline-text">If you are unable to scan the QR code, please enter this code manually into the app.</p>
+              <div class="backup-key-box">{{ totpSecret }}</div>
+              <div class="modal-actions">
+                <button class="primary-button" @click="goToBackupStep">Next step</button>
+              </div>
+            </div>
+            <div v-else-if="twoFAStep === 'backup'">
+              <h2 class="twofa-step-title">Step 3</h2>
+              <p class="twofa-step-subtitle">Please save this Key on paper.</p>
+              <p class="twofa-paragraph">
+                This Key will allow you to recover your Google Authenticator in case of phone loss.
+              </p>
+              <p class="twofa-paragraph">
+                Resetting your Google Authenticator requires opening a support ticket and takes at least 7 days to process
+              </p>
+              <div class="backup-key-box">{{ totpSecret }}</div>
+              <div class="modal-actions">
+                <button class="primary-button" @click="goToEnableCodeStep">Next step</button>
+              </div>
+            </div>
+            <div v-else-if="twoFAStep === 'enable'">
+              <h2 class="twofa-step-title">Step 4</h2>
+              <p class="twofa-step-subtitle">Enter your 6-digit Google Authenticator code</p>
+              <OtpInput
+                v-model="totpCodeInput"
+                :length="6"
+                :autofocus="true"
+                wrapper-class="code-input-row"
+                input-class="code-input-box"
+              />
+              <div class="modal-actions">
+                <button class="primary-button" :disabled="loading" @click="confirmTotpSetup">
+                  {{ loading ? 'Enabling...' : 'Enable 2FA' }}
+                </button>
               </div>
             </div>
           </div>
-          <div class="modal-actions">
-            <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
-            <button class="primary-button" :disabled="loading" @click="beginTotpSetupFlow">{{ loading ? 'Starting...' : 'Continue' }}</button>
+          <div class="twofa-back-link" @click="showTwoFAModal = false">
+            Back. I will setup 2FA later
           </div>
         </div>
-        <div v-else-if="twoFAStep === 'show'">
-          <div class="callout-title">Connect your authenticator</div>
-          <div class="callout-text">
-            Add a new account in your authenticator app by scanning the QR code or entering the key below.
-          </div>
-          <div v-if="totpQrDataUrl" class="form-group">
-            <label>Scan this QR code</label>
-            <div class="qr-wrapper">
-              <img :src="totpQrDataUrl" alt="Authenticator QR code" class="qr-image" />
-            </div>
-          </div>
+        <div v-else>
+          <h2 class="twofa-step-title">Disable 2FA</h2>
+          <p class="twofa-step-subtitle">Input the 6-digit code in your Google Authenticator app</p>
+          <OtpInput
+            v-model="disableTotpCodeInput"
+            :length="6"
+            wrapper-class="code-input-row"
+            input-class="code-input-box"
+          />
           <div class="form-group">
-            <label>Account</label>
-            <div class="id-value">{{ currentEmail }}</div>
-          </div>
-          <div class="form-group">
-            <label>Secret key</label>
-            <div class="id-row">
-              <div class="id-value">{{ totpSecret }}</div>
-              <button type="button" class="secondary-button" @click="copyToClipboard(totpSecret, '2FA key')" :disabled="!totpSecret">Copy</button>
-            </div>
-          </div>
-          <div class="form-group">
-            <label>Setup link (otpauth)</label>
-            <div class="id-row">
-              <div class="id-value">{{ totpUri }}</div>
-              <button type="button" class="secondary-button" @click="copyToClipboard(totpUri, 'Setup link')" :disabled="!totpUri">Copy</button>
-            </div>
+            <label for="disablePassword">Password</label>
+            <input
+              id="disablePassword"
+              type="password"
+              v-model="disablePasswordInput"
+            />
           </div>
           <div class="modal-actions">
             <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
-            <button class="primary-button" @click="goToVerifyTotp">Continue</button>
-          </div>
-        </div>
-        <div v-else-if="twoFAStep === 'verify'">
-          <div class="form-group">
-            <label for="totpCode">Code from authenticator</label>
-            <input id="totpCode" type="text" v-model="totpCodeInput" placeholder="123456" />
-          </div>
-          <div class="modal-actions">
-            <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
-            <button class="primary-button" :disabled="loading" @click="confirmTotpSetup">{{ loading ? 'Verifying...' : 'Enable 2FA' }}</button>
-          </div>
-        </div>
-        <div v-else-if="twoFAStep === 'disable-confirm'">
-          <div class="callout-title">Disable two-factor authentication</div>
-          <div class="callout-text">
-            Disabling 2FA reduces the security of your account. You can re-enable it at any time.
-          </div>
-          <div class="modal-actions">
-            <button class="secondary-button" @click="showTwoFAModal = false">Cancel</button>
-            <button class="primary-button" :disabled="loading" @click="confirmDisableTwoFA">{{ loading ? 'Disabling...' : 'Disable 2FA' }}</button>
+            <button class="primary-button" :disabled="loading" @click="confirmDisableTwoFA">
+              {{ loading ? 'Disabling...' : 'Disable 2FA' }}
+            </button>
           </div>
         </div>
       </div>
@@ -1578,23 +1617,28 @@ li {
   display: flex;
   justify-content: flex-end;
 }
-.primary-button {
-  padding: 0.6rem 1rem;
-  background: #2f54eb;
-  color: white;
-  border: none;
+.primary-button,
+.secondary-button,
+.danger-button {
+  padding: 0.7rem 1.5rem;
+  min-width: 200px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
   border-radius: 6px;
   font-weight: 700;
   cursor: pointer;
 }
+.primary-button {
+  background: #2f54eb;
+  color: white;
+  border: none;
+}
 .secondary-button {
-  padding: 0.6rem 1rem;
   background: transparent;
   color: var(--color-text);
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  font-weight: 700;
-  cursor: pointer;
 }
 .profile-section {
   margin-bottom: 2rem;
@@ -1721,6 +1765,102 @@ li {
 .modal-body {
   padding: 1rem 1.25rem 1.25rem;
 }
+.twofa-tabs {
+  display: flex;
+  gap: 1.5rem;
+  padding: 0 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.twofa-tab {
+  padding: 0.75rem 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--color-text-light);
+  border-bottom: 2px solid transparent;
+}
+.twofa-tab.active {
+  color: #ffffff;
+  border-bottom-color: #2563eb;
+}
+.twofa-step-body {
+  padding: 2rem 1.5rem 1.5rem;
+  text-align: center;
+}
+.twofa-step-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+.twofa-step-subtitle {
+  margin-bottom: 1.75rem;
+  color: var(--color-text-light);
+}
+.store-buttons-row {
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+.store-pill {
+  background: #000000;
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 0.75rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 150px;
+  text-decoration: none;
+}
+.store-pill-label {
+  font-size: 0.7rem;
+  opacity: 0.85;
+}
+.store-pill-name {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.backup-key-box {
+  margin: 1.5rem auto 2rem;
+  padding: 0.75rem 1rem;
+  max-width: 320px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: #111827;
+  color: #f9fafb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  word-break: break-all;
+}
+.twofa-paragraph {
+  margin: 0.25rem 0;
+}
+.code-input-row {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin: 1.5rem 0 2rem;
+}
+.code-input-box {
+  width: 2.75rem;
+  height: 3rem;
+  text-align: center;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+  font-size: 1.25rem;
+}
+.twofa-inline-text {
+  margin-top: 1rem;
+  color: var(--color-text-light);
+}
+.twofa-back-link {
+  margin-top: 1rem;
+  padding: 0 1.5rem 0.5rem;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #60a5fa;
+  cursor: pointer;
+}
 .callout {
   padding: 1rem;
   border: 1px solid rgba(128,0,255,0.4);
@@ -1832,12 +1972,8 @@ li {
   padding: 0 1rem 1rem;
 }
 .danger-button {
-  padding: 0.6rem 1rem;
   background: #d32029;
   color: white;
   border: none;
-  border-radius: 6px;
-  font-weight: 700;
-  cursor: pointer;
 }
 </style>

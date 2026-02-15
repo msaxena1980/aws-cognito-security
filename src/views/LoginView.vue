@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import OtpInput from '../components/OtpInput.vue';
 import { handleSignIn, handleResendSignUpCode, getAuthMethods, handleConfirmMfa } from '../services/auth';
 import { updateProfile } from '../services/profile';
 
@@ -129,9 +130,14 @@ async function login() {
     return;
   }
 
-  if (needsMfa.value && !otpCode.value) {
-    error.value = 'Enter the code from your authenticator app.';
-    return;
+  if (needsMfa.value) {
+    const raw = (otpCode.value || '').trim();
+    const code = raw.replace(/\D/g, '');
+    if (!code || code.length !== 6) {
+      error.value = 'Enter the 6-digit code from your authenticator app.';
+      return;
+    }
+    otpCode.value = code;
   }
 
   loading.value = true;
@@ -262,7 +268,11 @@ function goToVerification() {
 
       <div v-if="selectedMethod === 'password' && needsMfa" class="form-group">
         <label for="otp">Authenticator code</label>
-        <input id="otp" type="text" v-model="otpCode" placeholder="123456" />
+        <OtpInput
+          id="otp"
+          v-model="otpCode"
+          :length="6"
+        />
       </div>
 
       <div v-else-if="selectedMethod === 'passkeys'" class="form-group">

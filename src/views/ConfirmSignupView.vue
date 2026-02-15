@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { handleConfirmSignUp, handleResendSignUpCode } from '../services/auth';
+import OtpInput from '../components/OtpInput.vue';
 
 const email = ref('');
 const code = ref('');
@@ -29,7 +30,15 @@ async function confirm() {
   error.value = '';
   resendSuccess.value = '';
   try {
-    const { isSignUpComplete } = await handleConfirmSignUp(email.value, code.value);
+    const raw = (code.value || '').trim();
+    const digits = raw.replace(/\D/g, '');
+    if (!digits || digits.length !== 6) {
+      error.value = 'Enter the 6-digit verification code from your email';
+      loading.value = false;
+      return;
+    }
+    code.value = digits;
+    const { isSignUpComplete } = await handleConfirmSignUp(email.value, digits);
     if (isSignUpComplete) {
       router.push({
         path: '/login',
@@ -73,7 +82,11 @@ async function resendCode() {
       </div>
       <div class="form-group">
         <label for="code">Verification Code</label>
-        <input type="text" id="code" v-model="code" required />
+        <OtpInput
+          id="code"
+          v-model="code"
+          :length="6"
+        />
       </div>
       <div v-if="error" class="error-message">{{ error }}</div>
       <div v-if="resendSuccess" class="success-message">{{ resendSuccess }}</div>
