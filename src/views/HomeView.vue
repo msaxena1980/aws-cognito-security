@@ -6,7 +6,7 @@ import HelloWorld from '../components/HelloWorld.vue'
   <div class="home">
     <header class="home-header">
       <div class="wrapper">
-        <HelloWorld msg="AWS Cognito Security demo" />
+        <HelloWorld msg="Security Demo" />
       </div>
     </header>
 

@@ -1,6 +1,8 @@
 import { signUp, confirmSignUp, resendSignUpCode, signIn, signOut, getCurrentUser, fetchAuthSession, resetPassword, confirmResetPassword, updatePassword, updateUserAttributes, sendUserAttributeVerificationCode, confirmUserAttribute, fetchMFAPreference, setUpTOTP, verifyTOTPSetup, updateMFAPreference, confirmSignIn } from 'aws-amplify/auth';
 import { get, post } from 'aws-amplify/api';
 import { reactive } from 'vue';
+import { authenticateWithPasskey } from './passkey';
+import { generateUUID } from './uuid.js';
 
 export const authState = reactive({
     user: null,
@@ -78,7 +80,7 @@ export async function handleResendSignUpCode(email) {
 function getDeviceId() {
     let deviceId = localStorage.getItem('app_device_id');
     if (!deviceId) {
-        deviceId = crypto.randomUUID();
+        deviceId = generateUUID();
         localStorage.setItem('app_device_id', deviceId);
     }
     return deviceId;
@@ -178,6 +180,48 @@ export async function handleConfirmMfa(code) {
             recoverySuggestion: error.recoverySuggestion,
             underlyingError: error
         });
+        throw error;
+    }
+}
+
+export async function handlePasskeySignIn(email) {
+    try {
+        // Complete the WebAuthn ceremony and verify with backend
+        const passkeyResult = await authenticateWithPasskey(email);
+        
+        if (!passkeyResult.success) {
+            throw new Error(passkeyResult.message || 'Passkey authentication failed');
+        }
+
+        // The backend has stored a verification token, now use Amplify's signIn
+        // to establish the session using CUSTOM_AUTH flow
+        const { isSignedIn, nextStep } = await signIn({
+            username: email,
+            options: {
+                authFlowType: 'CUSTOM_WITHOUT_SRP'
+            }
+        });
+
+        // If we get a CUSTOM_CHALLENGE, respond with the verification token
+        if (nextStep?.signInStep === 'CONFIRM_SIGN_IN_WITH_CUSTOM_CHALLENGE') {
+            const confirmResult = await confirmSignIn({
+                challengeResponse: passkeyResult.verificationToken || 'passkey-verified'
+            });
+            
+            if (confirmResult.isSignedIn) {
+                await checkAuth();
+            }
+            
+            return { isSignedIn: confirmResult.isSignedIn, nextStep: confirmResult.nextStep };
+        }
+
+        if (isSignedIn) {
+            await checkAuth();
+        }
+        
+        return { isSignedIn, nextStep };
+    } catch (error) {
+        console.error('Error with passkey sign in:', error);
         throw error;
     }
 }

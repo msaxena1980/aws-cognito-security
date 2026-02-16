@@ -1,222 +1,136 @@
 # AWS Cognito Security Demo
 
-A full-stack security demo showcasing AWS Cognito authentication with Vue 3, featuring email/password sign-in, optional TOTP 2FA, encrypted vault, device tracking, and comprehensive account management.
+A production-ready authentication system built with AWS Cognito, featuring passwordless authentication with WebAuthn passkeys, TOTP 2FA, device tracking, and encrypted vault storage.
 
-## Features
+## ✨ Key Features
 
-- **Authentication**: Email/password sign-in with AWS Cognito
-- **Multi-Factor Authentication**: Optional TOTP (authenticator app) support
-- **Encrypted Vault**: KMS-encrypted passphrase and vault data storage
-- **Device Tracking**: Login history with anomaly detection and security alerts
-- **Account Management**: Profile editing, phone/email change flows, account deletion
-- **Free Tier Optimized**: All AWS resources configured for $0/month cost
+- 🔐 **Email/password authentication** with Cognito
+- 👆 **Passwordless authentication** with WebAuthn passkeys (Face ID, Touch ID, Windows Hello)
+- 🔒 **TOTP 2FA** (authenticator app) with enable/disable flows
+- 📧 **Email OTP verification** for sensitive operations (passkey deletion)
+- 📱 **Device fingerprinting** and tracking with security alerts
+- 🔐 **KMS-encrypted vault** and passphrase storage
+- 👤 **Complete account management** (profile, phone, email, password changes)
+- 🗑️ **Account deletion** with passphrase confirmation
+- ✅ **Dual verification methods** for passkey deletion (Email OTP or Password + 2FA)
 
-## Tech Stack
-
-- **Frontend**: Vue 3, Vue Router, Vite, AWS Amplify v6
-- **Backend**: AWS CDK, Lambda (Node.js 20), API Gateway, Cognito
-- **Data**: DynamoDB (3 tables), KMS for encryption
-- **Infrastructure**: Single CDK stack, fully automated deployment
-
-## Quick Start
-
-### 1. Prerequisites
-
-- Node.js 18+ and npm
-- AWS CLI configured with credentials
-- AWS account with Free Tier eligibility
-
-### 2. Deploy Infrastructure
+## 🚀 Quick Start
 
 ```bash
-cd infra
-npm install
-npm run create
-```
+# 1. Install dependencies
+cd infra && npm install && cd ..
 
-This will:
-- Deploy all AWS resources (Cognito, DynamoDB, Lambda, API Gateway, KMS)
-- Automatically update `src/aws-exports.js` with deployment values
-- Display deployment summary
+# 2. Deploy AWS infrastructure
+./infra/create.js
 
-### 3. Start Frontend
-
-```bash
-cd ..
-npm install
+# 3. Start the app
 npm run dev
 ```
 
-Visit: http://localhost:5173/
+Visit http://localhost:5173 and test the application!
 
-### 4. Test the Application
+## 📚 Complete Documentation
 
-- Sign up with a new account
-- Verify email (check your inbox)
-- Log in and explore features:
-  - Enable 2FA with authenticator app
-  - Create encrypted vault with passphrase
-  - Update profile, phone, email
-  - View device login history
+**All detailed documentation is in [`requirements.md`](requirements.md)**
 
-## Project Structure
+This includes:
+- Complete architecture overview
+- AWS resource details and configuration
+- Lambda function documentation
+- API endpoint reference
+- Security considerations and best practices
+- Testing guide and troubleshooting
+- Recent improvements and bug fixes
+- Future work and optimizations
+- Email OTP configuration guide
+- Dual verification method implementation
+
+## 🧪 Testing Passkeys
+
+1. Sign up for an account
+2. Navigate to Admin → Passkeys
+3. Click "Add Passkey"
+4. Complete biometric authentication
+5. Sign out
+6. Sign in with passkey (one click!)
+7. ✅ Authenticated with Cognito tokens
+
+## 💰 Cost
+
+**$0/month** - Optimized for AWS Free Tier:
+- Cognito: 50,000 MAUs free
+- DynamoDB: 4 tables @ 1 RCU/WCU each
+- Lambda: 16 functions @ 128MB
+- API Gateway: 1M requests free (first 12 months)
+- KMS: 20,000 requests free
+
+**Production estimate:** $5-10/month for low-moderate traffic
+
+## 🛠️ Tech Stack
+
+**Frontend:** Vue 3, Vue Router, AWS Amplify, WebAuthn API  
+**Backend:** AWS CDK, Cognito, Lambda (Node.js 20.x), DynamoDB, API Gateway, KMS, SES
+
+## 📁 Project Structure
 
 ```
 aws-cognito-security/
 ├── src/                    # Vue 3 frontend
-│   ├── views/             # Login, Signup, Admin views
-│   ├── services/          # Auth, profile, vault services
+│   ├── views/             # Login, Admin, Passkey views
+│   ├── services/          # Auth, passkey, profile services
 │   └── components/        # Reusable UI components
 ├── infra/                 # AWS infrastructure
-│   ├── stack.js          # Complete CDK infrastructure
-│   ├── create.js         # Deploy script
-│   ├── destroy.js        # Destroy script
-│   ├── lambda/           # Lambda functions (9 total)
-│   └── tests/            # Lambda tests (Jest)
-└── docs/                  # Complete documentation
-    └── aws-cognito-implementation-plan.md
+│   ├── stack.js          # Complete CDK stack
+│   ├── create.js         # Deployment script
+│   ├── lambda/           # 16 Lambda functions
+│   └── tests/            # Lambda tests
+├── requirements.md        # Complete documentation
+└── README.md             # This file
 ```
 
-## Documentation
-
-- **[Complete Implementation Plan](docs/aws-cognito-implementation-plan.md)** - Architecture, implementation details, optimizations
-- **[Infrastructure Guide](infra/README.md)** - Deployment, troubleshooting, AWS resources
-- **[Consolidation Summary](CONSOLIDATION_SUMMARY.md)** - Recent consolidation work
-
-## AWS Resources (Free Tier)
-
-- **Cognito User Pool**: Email authentication, optional TOTP MFA (50,000 MAUs free)
-- **DynamoDB Tables**: UserSecurity, EmailMapping, DeviceTracking (6 RCU/WCU total)
-- **Lambda Functions**: 9 functions @ 128MB (1M requests free)
-- **API Gateway**: REST API with Cognito authorizer (1M requests free)
-- **KMS Key**: Vault/passphrase encryption (20,000 requests free)
-
-**Total Cost: $0/month** (within AWS Free Tier)
-
-## Key Features Implemented
-
-### Authentication & Security
-- ✅ Email/password sign-in with Cognito
-- ✅ Email verification
-- ✅ Password reset flow
-- ✅ Optional TOTP 2FA (authenticator app)
-- ✅ Device fingerprinting and tracking
-- ✅ Security alerts for new device logins
-
-### Account Management
-- ✅ Profile editing (name, email, phone)
-- ✅ Phone number change with verification
-- ✅ Email change with verification
-- ✅ Password change
-- ✅ 2FA enable/disable with verification
-- ✅ Account deletion with passphrase confirmation
-
-### Vault & Encryption
-- ✅ KMS-encrypted passphrase storage
-- ✅ Encrypted vault data in DynamoDB
-- ✅ Passphrase verification for sensitive operations
-
-### Infrastructure
-- ✅ Single CDK stack (all resources in one file)
-- ✅ Automated deployment with frontend auto-configuration
-- ✅ Free Tier optimized (DynamoDB provisioned, Lambda 128MB)
-- ✅ Comprehensive Lambda tests (Jest + aws-sdk-client-mock)
-
-## Development
-
-### Frontend Development
+## 🔧 Useful Commands
 
 ```bash
-npm run dev          # Start dev server
-npm run build        # Build for production
-npm run preview      # Preview production build
+./infra/create.js          # Deploy infrastructure
+./infra/destroy.js         # Destroy infrastructure
+cd infra && npm test       # Run tests
+npm run dev                # Start frontend
+npm run build              # Build frontend
 ```
 
-### Infrastructure Development
+## 🐛 Troubleshooting
 
-```bash
-cd infra
-npm test             # Run Lambda tests
-npm run create       # Deploy infrastructure
-npm run destroy      # Destroy infrastructure
-```
+See [`requirements.md`](requirements.md) for:
+- Deployment troubleshooting
+- Email OTP configuration (CloudWatch logs or SES setup)
+- Passkey issues
+- AWS CLI commands
+- Common issues and solutions
 
-### Environment Variables (Optional)
+## 📝 Recent Improvements
 
-```bash
-export SES_SENDER_EMAIL="your-verified-email@example.com"
-export ENCRYPTION_KEY="your-secret-key"
-```
+- ✅ Full Cognito integration for passkeys (JWT tokens)
+- ✅ Dual verification for passkey deletion (Email OTP or Password + 2FA)
+- ✅ One-click passkey authentication
+- ✅ LocalStorage state tracking
+- ✅ Fixed passkey naming convention
+- ✅ Comprehensive bug fixes
 
-## Troubleshooting
+See [`requirements.md`](requirements.md) for complete details.
 
-### Deployment Issues
+## 🔒 Security
 
-```bash
-# Check AWS credentials
-aws sts get-caller-identity
+- WebAuthn for passwordless authentication
+- TOTP 2FA with authenticator apps
+- Email OTP for sensitive operations
+- KMS encryption for vault data
+- Device tracking and anomaly detection
+- Security alerts for new devices
 
-# Manually destroy stuck stack
-aws cloudformation delete-stack --stack-name InfraStack --region us-east-1
-```
+## 📄 License
 
-### Frontend Not Connecting
+This is a demo project for educational purposes.
 
-- Verify `src/aws-exports.js` was auto-generated by `create.js`
-- Check API Gateway URL in `aws-exports.js` matches deployed API
-- Ensure CORS is enabled in API Gateway
+---
 
-### Lambda Errors
-
-```bash
-# View Lambda logs
-aws logs tail /aws/lambda/InfraStack-PostAuthenticationHandler --follow
-
-# Check DynamoDB tables
-aws dynamodb list-tables --region us-east-1
-```
-
-## Production Considerations
-
-For production deployment:
-
-1. **DynamoDB**: Switch to PAY_PER_REQUEST or higher capacity
-2. **Lambda**: Increase memory to 256-512MB
-3. **CORS**: Restrict to specific production domains
-4. **Cognito**: Enable advanced security features
-5. **Monitoring**: Set up CloudWatch alarms
-6. **Secrets**: Use AWS Secrets Manager instead of environment variables
-
-Estimated production cost: $5-10/month for low traffic
-
-## Testing
-
-```bash
-# Frontend tests (not yet implemented)
-npm test
-
-# Lambda tests
-cd infra
-npm test
-```
-
-## License
-
-MIT
-
-## Contributing
-
-This is a demo project. Feel free to fork and adapt for your needs.
-
-## Recommended IDE Setup
-
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
-
-## Recommended Browser Setup
-
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+**Built with ❤️ using AWS Cognito and Vue 3**

@@ -28,6 +28,9 @@ class InfraStack extends cdk.Stack {
       standardAttributes: {
         email: { required: true, mutable: true },
       },
+      customAttributes: {
+        passkeyEnabled: new cdk.aws_cognito.StringAttribute({ mutable: true }),
+      },
       autoVerify: { email: true },
       mfa: cdk.aws_cognito.Mfa.OPTIONAL,
       mfaSecondFactor: { sms: false, otp: true },
@@ -110,6 +113,32 @@ class InfraStack extends cdk.Stack {
       writeCapacity: 1,
     });
 
+    const passkeysTable = new cdk.aws_dynamodb.Table(this, 'PasskeysTable', {
+      tableName: 'Passkeys',
+      partitionKey: { name: 'userSub', type: cdk.aws_dynamodb.AttributeType.STRING },
+      sortKey: { name: 'credentialId', type: cdk.aws_dynamodb.AttributeType.STRING },
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      billingMode: cdk.aws_dynamodb.BillingMode.PROVISIONED,
+      readCapacity: 1,
+      writeCapacity: 1,
+    });
+
+    passkeysTable.addGlobalSecondaryIndex({
+      indexName: 'DeviceIdIndex',
+      partitionKey: { name: 'deviceId', type: cdk.aws_dynamodb.AttributeType.STRING },
+      projectionType: cdk.aws_dynamodb.ProjectionType.ALL,
+      readCapacity: 1,
+      writeCapacity: 1,
+    });
+
+    passkeysTable.addGlobalSecondaryIndex({
+      indexName: 'CredentialIdIndex',
+      partitionKey: { name: 'credentialId', type: cdk.aws_dynamodb.AttributeType.STRING },
+      projectionType: cdk.aws_dynamodb.ProjectionType.ALL,
+      readCapacity: 1,
+      writeCapacity: 1,
+    });
+
     // 2.5. KMS KEY for passphrase encryption
     const kmsKey = new cdk.aws_kms.Key(this, 'PassphraseEncryptionKey', {
       description: 'KMS key for encrypting user passphrases',
@@ -152,12 +181,40 @@ class InfraStack extends cdk.Stack {
       },
     });
 
+    const defineAuthChallengeLambda = new cdk.aws_lambda.Function(this, 'DefineAuthChallengeHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'defineAuthChallenge.handler',
+      memorySize: 128,
+      timeout: cdk.Duration.seconds(3),
+    });
+
+    const createAuthChallengeLambda = new cdk.aws_lambda.Function(this, 'CreateAuthChallengeHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'createAuthChallenge.handler',
+      memorySize: 128,
+      timeout: cdk.Duration.seconds(3),
+    });
+
+    const verifyAuthChallengeLambda = new cdk.aws_lambda.Function(this, 'VerifyAuthChallengeHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'verifyAuthChallenge.handler',
+      memorySize: 128,
+      timeout: cdk.Duration.seconds(3),
+      environment: {
+        PASSKEYS_TABLE: passkeysTable.tableName,
+      },
+    });
+
     // Grant permissions and add triggers
     userSecurityTable.grantReadWriteData(preSignUpLambda);
     userSecurityTable.grantReadWriteData(postConfirmationLambda);
     emailMappingTable.grantReadWriteData(postConfirmationLambda);
     userSecurityTable.grantReadWriteData(postAuthenticationLambda);
     deviceTrackingTable.grantReadWriteData(postAuthenticationLambda);
+    passkeysTable.grantReadWriteData(verifyAuthChallengeLambda);
 
     postAuthenticationLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
       actions: ['ses:SendEmail', 'ses:SendRawEmail'],
@@ -167,6 +224,9 @@ class InfraStack extends cdk.Stack {
     userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.PRE_SIGN_UP, preSignUpLambda);
     userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.POST_CONFIRMATION, postConfirmationLambda);
     userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.POST_AUTHENTICATION, postAuthenticationLambda);
+    userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.DEFINE_AUTH_CHALLENGE, defineAuthChallengeLambda);
+    userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.CREATE_AUTH_CHALLENGE, createAuthChallengeLambda);
+    userPool.addTrigger(cdk.aws_cognito.UserPoolOperation.VERIFY_AUTH_CHALLENGE_RESPONSE, verifyAuthChallengeLambda);
 
     // 4. LAMBDA FUNCTIONS - API Endpoints
     const helloLambda = new cdk.aws_lambda.Function(this, 'HelloHandler', {
@@ -189,10 +249,12 @@ class InfraStack extends cdk.Stack {
         TABLE_NAME: userSecurityTable.tableName,
         EMAIL_MAPPING_TABLE: emailMappingTable.tableName,
         USER_POOL_ID: userPool.userPoolId,
+        PASSKEYS_TABLE: passkeysTable.tableName,
       },
     });
     userSecurityTable.grantReadData(getAuthMethodsLambda);
     emailMappingTable.grantReadData(getAuthMethodsLambda);
+    passkeysTable.grantReadData(getAuthMethodsLambda);
     getAuthMethodsLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
       actions: ['cognito-idp:ListUsers'],
       resources: [userPool.userPoolArn],
@@ -292,6 +354,24 @@ class InfraStack extends cdk.Stack {
       resources: ['*'],
     }));
 
+    const emailOtpLambda = new cdk.aws_lambda.Function(this, 'EmailOtpHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'emailOtp.handler',
+      memorySize: 128,
+      timeout: cdk.Duration.seconds(5),
+      environment: {
+        TABLE_NAME: userSecurityTable.tableName,
+        DEV_EMAIL_MODE: process.env.DEV_EMAIL_MODE ?? 'inline',
+        SES_SENDER_EMAIL: process.env.SES_SENDER_EMAIL ?? 'noreply@example.com',
+      },
+    });
+    userSecurityTable.grantReadWriteData(emailOtpLambda);
+    emailOtpLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: ['*'],
+    }));
+
     const verifyCredentialsLambda = new cdk.aws_lambda.Function(this, 'VerifyCredentialsHandler', {
       runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
       code: cdk.aws_lambda.Code.fromAsset('lambda'),
@@ -304,6 +384,26 @@ class InfraStack extends cdk.Stack {
     });
     verifyCredentialsLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
       actions: ['cognito-idp:InitiateAuth', 'cognito-idp:RespondToAuthChallenge'],
+      resources: [userPool.userPoolArn],
+    }));
+
+    const passkeyLambda = new cdk.aws_lambda.Function(this, 'PasskeyHandler', {
+      runtime: cdk.aws_lambda.Runtime.NODEJS_20_X,
+      code: cdk.aws_lambda.Code.fromAsset('lambda'),
+      handler: 'passkey.handler',
+      memorySize: 128,
+      timeout: cdk.Duration.seconds(5),
+      environment: {
+        PASSKEYS_TABLE: passkeysTable.tableName,
+        TABLE_NAME: userSecurityTable.tableName,
+        USER_POOL_ID: userPool.userPoolId,
+        USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
+      },
+    });
+    passkeysTable.grantReadWriteData(passkeyLambda);
+    userSecurityTable.grantReadWriteData(passkeyLambda);
+    passkeyLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['cognito-idp:AdminInitiateAuth', 'cognito-idp:AdminRespondToAuthChallenge', 'cognito-idp:AdminUpdateUserAttributes'],
       resources: [userPool.userPoolArn],
     }));
 
@@ -398,11 +498,43 @@ class InfraStack extends cdk.Stack {
       new cdk.aws_apigateway.LambdaIntegration(emailChangeLambda), 
       { authorizer, authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO }
     );
+    emailRes.addResource('send-otp').addMethod('POST', 
+      new cdk.aws_apigateway.LambdaIntegration(emailOtpLambda), 
+      { authorizer, authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO }
+    );
+    emailRes.addResource('verify-otp').addMethod('POST', 
+      new cdk.aws_apigateway.LambdaIntegration(emailOtpLambda), 
+      { authorizer, authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO }
+    );
 
     const verifyCredsResource = api.root.addResource('verify-credentials');
     verifyCredsResource.addMethod('POST', 
       new cdk.aws_apigateway.LambdaIntegration(verifyCredentialsLambda)
       // No authorizer - we verify credentials in the Lambda itself
+    );
+
+    const passkeyResource = api.root.addResource('passkey');
+    passkeyResource.addResource('register-options').addMethod('POST',
+      new cdk.aws_apigateway.LambdaIntegration(passkeyLambda),
+      { authorizer, authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO }
+    );
+    passkeyResource.addResource('register').addMethod('POST',
+      new cdk.aws_apigateway.LambdaIntegration(passkeyLambda),
+      { authorizer, authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO }
+    );
+    passkeyResource.addResource('authenticate-options').addMethod('POST',
+      new cdk.aws_apigateway.LambdaIntegration(passkeyLambda)
+    );
+    passkeyResource.addResource('authenticate').addMethod('POST',
+      new cdk.aws_apigateway.LambdaIntegration(passkeyLambda)
+    );
+    passkeyResource.addResource('list').addMethod('GET',
+      new cdk.aws_apigateway.LambdaIntegration(passkeyLambda),
+      { authorizer, authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO }
+    );
+    passkeyResource.addResource('delete').addMethod('POST',
+      new cdk.aws_apigateway.LambdaIntegration(passkeyLambda),
+      { authorizer, authorizationType: cdk.aws_apigateway.AuthorizationType.COGNITO }
     );
 
     // CORS error handling

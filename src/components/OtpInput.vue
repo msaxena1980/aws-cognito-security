@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch, nextTick } from 'vue';
 
 const props = defineProps({
   modelValue: {
@@ -39,6 +39,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'complete']);
 
 const inputs = ref([]);
+const isPasting = ref(false);
 
 const internalValue = computed(() => {
   const v = (props.modelValue || '').replace(/\D/g, '');
@@ -107,6 +108,12 @@ function onInput(index, event) {
     event.preventDefault();
     return;
   }
+  
+  // Skip if we're in the middle of a paste operation
+  if (isPasting.value) {
+    return;
+  }
+  
   const raw = event.target.value || '';
   const digits = raw.replace(/\D/g, '');
   if (!digits) {
@@ -155,14 +162,37 @@ function onPaste(index, event) {
     event.preventDefault();
     return;
   }
+  
   event.preventDefault();
+  event.stopPropagation();
+  
+  isPasting.value = true;
+  
   const text = event.clipboardData?.getData('text') || '';
   const digits = text.replace(/\D/g, '');
-  if (!digits) return;
-  updateValueFromDigits(index, digits);
-  const length = props.length;
-  const targetIndex = Math.min(index + digits.length, length - 1);
-  focusInput(targetIndex);
+  
+  console.log('Paste detected:', { text, digits, index });
+  
+  if (!digits) {
+    isPasting.value = false;
+    return;
+  }
+  
+  // Fill from the beginning with the pasted digits
+  const fillValue = digits.slice(0, props.length);
+  emit('update:modelValue', fillValue);
+  
+  // Use nextTick to ensure Vue has updated the DOM
+  nextTick(() => {
+    // Focus the appropriate box
+    const focusIndex = Math.min(fillValue.length, props.length - 1);
+    focusInput(focusIndex);
+    
+    // Reset pasting flag after a short delay
+    setTimeout(() => {
+      isPasting.value = false;
+    }, 100);
+  });
 }
 
 function setInputRef(el, index) {
@@ -180,7 +210,7 @@ function setInputRef(el, index) {
       :ref="el => setInputRef(el, index)"
       type="text"
       inputmode="numeric"
-      autocomplete="one-time-code"
+      :autocomplete="index === 0 ? 'one-time-code' : 'off'"
       :id="props.id ? (index === 0 ? props.id : `${props.id}-${index}`) : undefined"
       :name="name || undefined"
       maxlength="1"

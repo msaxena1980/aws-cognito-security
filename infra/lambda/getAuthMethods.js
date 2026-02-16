@@ -18,6 +18,7 @@ export const handler = async (event) => {
     const email = event.queryStringParameters?.email;
     const tableName = process.env.TABLE_NAME;
     const userPoolId = process.env.USER_POOL_ID;
+    const emailMappingTable = process.env.EMAIL_MAPPING_TABLE;
 
     if (!email) {
         return {
@@ -28,7 +29,73 @@ export const handler = async (event) => {
     }
 
     try {
-        // 1. Check DynamoDB first
+        // 1. Check Cognito first to get user status
+        console.log(`Checking Cognito for user ${email}...`);
+        const cognitoResponse = await cognitoClient.send(new ListUsersCommand({
+            UserPoolId: userPoolId,
+            Filter: `email = "${email}"`,
+            Limit: 1
+        }));
+
+        if (!cognitoResponse.Users || cognitoResponse.Users.length === 0) {
+            console.log(`User ${email} not found in Cognito.`);
+            return {
+                statusCode: 404,
+                headers: CORS_HEADERS,
+                body: JSON.stringify({ 
+                    message: "User not found. Please sign up first.",
+                    code: "UserNotFoundException"
+                })
+            };
+        }
+
+        const user = cognitoResponse.Users[0];
+        console.log(`User ${email} found in Cognito. Status: ${user.UserStatus}`);
+
+        if (user.UserStatus === "UNCONFIRMED") {
+            return {
+                statusCode: 200,
+                headers: CORS_HEADERS,
+                body: JSON.stringify({
+                    status: "UNCONFIRMED",
+                    message: "User is unconfirmed."
+                })
+            };
+        }
+
+        // 2. Get user sub from email mapping
+        const sub = user.Attributes?.find(attr => attr.Name === 'sub')?.Value;
+        
+        // 3. Check for passkeys (excluding temporary challenge records)
+        let hasPasskeys = false;
+        if (sub) {
+            try {
+                const passkeysTable = process.env.PASSKEYS_TABLE || 'Passkeys';
+                const passkeysResponse = await docClient.send(new QueryCommand({
+                    TableName: passkeysTable,
+                    KeyConditionExpression: "userSub = :sub",
+                    ExpressionAttributeValues: {
+                        ":sub": sub
+                    }
+                }));
+                
+                // Filter out temporary challenge records
+                const realPasskeys = (passkeysResponse.Items || []).filter(item => 
+                    item.userSub === sub && 
+                    !item.userSub.startsWith('CHALLENGE#') && 
+                    !item.userSub.startsWith('AUTH_CHALLENGE#') &&
+                    !item.userSub.startsWith('PASSKEY_VERIFIED#') &&
+                    item.credentialId !== 'TEMP'
+                );
+                
+                hasPasskeys = realPasskeys.length > 0;
+                console.log(`User ${email} has ${realPasskeys.length} real passkeys`);
+            } catch (err) {
+                console.warn('Error checking passkeys:', err);
+            }
+        }
+
+        // 4. Check DynamoDB for profile settings
         const ddbResponse = await docClient.send(new QueryCommand({
             TableName: tableName,
             IndexName: "EmailIndex",
@@ -38,58 +105,33 @@ export const handler = async (event) => {
             }
         }));
 
+        let authMethods = { password: true };
+        
         if (ddbResponse.Items && ddbResponse.Items.length > 0) {
             const userProfile = ddbResponse.Items[0];
-            return {
-                statusCode: 200,
-                headers: CORS_HEADERS,
-                body: JSON.stringify({
-                    authMethods: userProfile.authMethods || { password: true }
-                })
-            };
+            authMethods = userProfile.authMethods || { password: true };
         }
 
-        // 2. If not in DynamoDB, check Cognito
-        console.log(`User ${email} not found in DynamoDB, checking Cognito...`);
-        const cognitoResponse = await cognitoClient.send(new ListUsersCommand({
-            UserPoolId: userPoolId,
-            Filter: `email = "${email}"`,
-            Limit: 1
-        }));
-
-        if (cognitoResponse.Users && cognitoResponse.Users.length > 0) {
-            const user = cognitoResponse.Users[0];
-            console.log(`User ${email} found in Cognito. Status: ${user.UserStatus}`);
-
-            if (user.UserStatus === "UNCONFIRMED") {
-                return {
-                    statusCode: 200,
-                    headers: CORS_HEADERS,
-                    body: JSON.stringify({
-                        status: "UNCONFIRMED",
-                        message: "User is unconfirmed."
-                    })
-                };
+        // Override passkeys based on actual database state
+        // Only include passkeys if user actually has them
+        if (hasPasskeys) {
+            authMethods.passkeys = true;
+        } else {
+            // Explicitly remove passkeys if they don't exist
+            authMethods.passkeys = false;
+            // Clean up the object - remove false values
+            if (!authMethods.passkeys) {
+                delete authMethods.passkeys;
             }
-
-            console.log(`User ${email} found in Cognito but not in DynamoDB. Defaulting to password.`);
-            return {
-                statusCode: 200,
-                headers: CORS_HEADERS,
-                body: JSON.stringify({
-                    authMethods: { password: true }
-                })
-            };
         }
 
-        // 3. User not found anywhere
-        console.log(`User ${email} not found in DynamoDB or Cognito.`);
+        console.log(`Final auth methods for ${email}:`, authMethods);
+
         return {
-            statusCode: 404,
+            statusCode: 200,
             headers: CORS_HEADERS,
-            body: JSON.stringify({ 
-                message: "User not found. Please sign up first.",
-                code: "UserNotFoundException"
+            body: JSON.stringify({
+                authMethods
             })
         };
 

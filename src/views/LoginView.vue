@@ -2,8 +2,9 @@
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import OtpInput from '../components/OtpInput.vue';
-import { handleSignIn, handleResendSignUpCode, getAuthMethods, handleConfirmMfa } from '../services/auth';
+import { handleSignIn, handleResendSignUpCode, getAuthMethods, handleConfirmMfa, handlePasskeySignIn } from '../services/auth';
 import { updateProfile } from '../services/profile';
+import { isPasskeyEnabledLocally } from '../services/passkey';
 
 const email = ref('');
 const password = ref('');
@@ -35,7 +36,9 @@ async function nextStep() {
   error.value = '';
   
   try {
+    console.log('Fetching auth methods for:', email.value);
     const result = await getAuthMethods(email.value);
+    console.log('Auth methods received from server:', JSON.stringify(result, null, 2));
     
     if (result.isUnconfirmed) {
       console.log('User is unconfirmed, triggering auto-resend and redirect...');
@@ -45,23 +48,49 @@ async function nextStep() {
 
     supportedMethods.value = result;
     
+    // Check localStorage first - if passkey was deleted locally, don't show it
+    const passkeyEnabledLocally = isPasskeyEnabledLocally();
+    console.log('Passkey enabled in localStorage:', passkeyEnabledLocally);
+    
     // Define valid login methods (Password and Passkeys only)
     const validLoginMethods = ['password', 'passkeys'];
-    const activeMethods = Object.keys(result).filter(k => result[k] && validLoginMethods.includes(k));
+    const activeMethods = Object.keys(result).filter(k => {
+      // If it's passkeys, also check localStorage
+      if (k === 'passkeys') {
+        const isActive = result[k] && validLoginMethods.includes(k) && passkeyEnabledLocally;
+        console.log(`Method ${k}: serverValue=${result[k]}, localStorage=${passkeyEnabledLocally}, isActive=${isActive}`);
+        return isActive;
+      }
+      const isActive = result[k] && validLoginMethods.includes(k);
+      console.log(`Method ${k}: value=${result[k]}, isActive=${isActive}`);
+      return isActive;
+    });
+    
+    console.log('Active methods after filtering:', activeMethods);
     
     // Check if Passkey is supported on this device
     const isPasskeySupported = window.PublicKeyCredential && 
                                await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
     
+    console.log('Passkey supported on device:', isPasskeySupported);
+    
     // Refined active methods: only include passkeys if supported by device
-    const deviceActiveMethods = activeMethods.filter(m => m !== 'passkeys' || isPasskeySupported);
+    const deviceActiveMethods = activeMethods.filter(m => {
+      const include = m !== 'passkeys' || isPasskeySupported;
+      console.log(`Method ${m}: include=${include}`);
+      return include;
+    });
+
+    console.log('Final device active methods:', deviceActiveMethods);
 
     if (deviceActiveMethods.length <= 1) {
       // If only password or nothing (default to password), go straight to auth
       selectedMethod.value = deviceActiveMethods.length === 1 ? deviceActiveMethods[0] : 'password';
+      console.log('Going straight to auth with method:', selectedMethod.value);
       step.value = 'auth';
     } else {
       // Multiple options available (Password and Passkeys on this device)
+      console.log('Multiple methods available, showing selection');
       step.value = 'methods';
     }
   } catch (err) {
@@ -78,7 +107,13 @@ async function nextStep() {
 
 function selectMethod(method) {
   selectedMethod.value = method;
-  step.value = 'auth';
+  
+  // If passkey is selected, start authentication immediately
+  if (method === 'passkeys') {
+    login();
+  } else {
+    step.value = 'auth';
+  }
 }
 
 async function handleUnconfirmed(emailValue) {
@@ -167,6 +202,9 @@ async function login() {
       let result;
       if (selectedMethod.value === 'password') {
         result = await handleSignIn(email.value, password.value);
+      } else if (selectedMethod.value === 'passkeys') {
+        // Authenticate with passkey
+        result = await handlePasskeySignIn(email.value);
       } else {
         error.value = `Authentication method '${selectedMethod.value}' is not yet implemented in this demo. Please use password.`;
         loading.value = false;
@@ -247,14 +285,15 @@ function goToVerification() {
     <div v-else-if="step === 'methods'" class="auth-form">
       <p>Choose your authentication method for <strong>{{ email }}</strong>:</p>
       <div class="method-list">
-        <button v-if="supportedMethods.password" @click="selectMethod('password')" class="method-button">
+        <button v-if="supportedMethods.password" @click="selectMethod('password')" :disabled="loading" class="method-button">
           Use Password
         </button>
-        <button v-if="supportedMethods.passkeys" @click="selectMethod('passkeys')" class="method-button">
-          Passkey (Biometric)
+        <button v-if="supportedMethods.passkeys" @click="selectMethod('passkeys')" :disabled="loading" class="method-button">
+          {{ loading ? 'Authenticating...' : 'Passkey (Biometric)' }}
         </button>
       </div>
-      <button @click="back" class="back-button">Back</button>
+      <button @click="back" :disabled="loading" class="back-button">Back</button>
+      <div v-if="error" class="error-message">{{ error }}</div>
     </div>
 
     <!-- Step 3: Authenticate -->

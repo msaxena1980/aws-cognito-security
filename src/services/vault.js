@@ -155,7 +155,10 @@ export async function getVaultMetadata() {
     if (status === 404) {
       return { exists: false };
     }
-    console.error('Error in getVaultMetadata:', error);
+    // Only log non-404 errors
+    if (status !== 404) {
+      console.error('Error in getVaultMetadata:', error);
+    }
     return { exists: false };
   }
 }

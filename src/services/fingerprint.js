@@ -6,6 +6,8 @@
  * This implementation uses the open-source version as a starting point
  */
 
+import { generateUUID } from './uuid.js';
+
 /**
  * Generates a device fingerprint using browser APIs
  * This is a simplified implementation - for production use FingerprintJS library
@@ -82,7 +84,7 @@ export async function getDeviceId() {
 
   if (!deviceId) {
     // Generate new device ID combining UUID and fingerprint
-    const uuid = crypto.randomUUID();
+    const uuid = generateUUID();
     const fingerprint = await generateDeviceFingerprint();
     deviceId = `${uuid}-${fingerprint}`;
     localStorage.setItem(storageKey, deviceId);
@@ -145,7 +147,6 @@ export function isFingerprintingSupported() {
   return !!(
     window.crypto &&
     window.crypto.subtle &&
-    window.crypto.randomUUID &&
     document.createElement
   );
 }

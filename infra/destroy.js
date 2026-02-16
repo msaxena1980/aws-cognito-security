@@ -6,7 +6,12 @@
  */
 
 import { execSync } from 'child_process';
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
 import * as readline from 'readline';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const INFRA_DIR = __dirname;
 
 function ask(question) {
   const rl = readline.createInterface({ 
@@ -42,7 +47,7 @@ async function main() {
   try {
     execSync('npx cdk destroy --force --app "node stack.js"', {
       stdio: 'inherit',
-      cwd: process.cwd(),
+      cwd: INFRA_DIR,
     });
 
     console.log('\n✅ Stack destroyed successfully!\n');

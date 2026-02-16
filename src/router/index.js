@@ -52,6 +52,12 @@ const router = createRouter({
       component: () => import('../views/AdminView.vue'),
       meta: { title: 'Admin', requiresAuth: true },
     },
+    {
+      path: '/passkey',
+      name: 'passkey',
+      component: () => import('../views/PasskeyView.vue'),
+      meta: { title: 'Passkeys', requiresAuth: true },
+    },
   ],
 })
 

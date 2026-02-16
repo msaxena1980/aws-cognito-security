@@ -12,6 +12,12 @@
  * Usage:
  *   node create.js
  *   npm run create
+ *   
+ * Deployment Commands (executed automatically):
+ *   1. npm install (in infra directory)
+ *   2. npx cdk deploy --require-approval never --app "node stack.js"
+ *   3. aws cloudformation describe-stacks --stack-name InfraStack --region us-east-1
+ *   4. Updates src/aws-exports.js with new configuration
  * 
  * Environment Variables (optional):
  *   SES_SENDER_EMAIL - Verified email for SES (default: noreply@example.com)
@@ -46,6 +52,12 @@
  *       - Attributes: deviceType, fingerprint, firstSeen, lastLogin, lastIp, isTrusted
  *       - GSI: LastLoginIndex (query recent logins)
  *       - Purpose: Isolated device history (prevents hot partitions)
+ * 
+ *    d) Passkeys
+ *       - pk: userSub, sk: credentialId
+ *       - Attributes: publicKey, deviceId, deviceName, email, counter, createdAt, lastUsed
+ *       - GSI: DeviceIdIndex (device-based lookups)
+ *       - Purpose: WebAuthn passkey credentials for passwordless authentication
  * 
  * 3. KMS KEY
  *    - For vault/passphrase encryption
@@ -113,6 +125,15 @@
  *      → Used for 2FA disable flow (no new session created)
  *      → Permissions: Cognito InitiateAuth + RespondToAuthChallenge
  * 
+ *    - passkey.js (5s timeout)
+ *      → POST /passkey/register-options - generate passkey registration challenge
+ *      → POST /passkey/register - complete passkey registration
+ *      → POST /passkey/authenticate-options - generate authentication challenge
+ *      → POST /passkey/authenticate - complete passkey authentication
+ *      → GET /passkey/list - list user's passkeys
+ *      → POST /passkey/delete - delete a passkey
+ *      → Permissions: Passkeys table read/write, Cognito AdminInitiateAuth
+ * 
  * 5. API GATEWAY
  *    - REST API with Cognito authorizer
  *    - CORS: Allow all origins (configurable for production)
@@ -136,6 +157,12 @@
  *    - POST /profile/email/verify-old (auth)
  *    - POST /profile/email/verify-new (auth)
  *    - POST /verify-credentials (public)
+ *    - POST /passkey/register-options (auth)
+ *    - POST /passkey/register (auth)
+ *    - POST /passkey/authenticate-options (public)
+ *    - POST /passkey/authenticate (public)
+ *    - GET /passkey/list (auth)
+ *    - POST /passkey/delete (auth)
  * 
  * ============================================================================
  * UTILITY MODULES (lambda/utils/)
@@ -157,7 +184,7 @@
  * ============================================================================
  * 
  * - Cognito: 50,000 MAUs free
- * - DynamoDB: 25 RCU/WCU free (using 6 RCU + 6 WCU)
+ * - DynamoDB: 25 RCU/WCU free (using 8 RCU + 8 WCU with Passkeys table)
  * - Lambda: 1M requests + 400,000 GB-seconds free
  * - API Gateway: 1M requests free (first 12 months)
  * - KMS: 20,000 requests free
@@ -184,6 +211,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = join(__dirname, '..');
+const INFRA_DIR = __dirname;
 
 console.log('\n🚀 Deploying AWS Infrastructure...\n');
 
@@ -192,7 +220,7 @@ try {
   console.log('Running: npx cdk deploy --require-approval never --app "node stack.js"\n');
   execSync('npx cdk deploy --require-approval never --app "node stack.js"', {
     stdio: 'inherit',
-    cwd: process.cwd(),
+    cwd: INFRA_DIR,
   });
 
   console.log('\n✅ Deployment complete!\n');
@@ -201,7 +229,7 @@ try {
   console.log('Fetching stack outputs...');
   const outputs = execSync(
     'aws cloudformation describe-stacks --stack-name InfraStack --region us-east-1 --query "Stacks[0].Outputs" --output json',
-    { encoding: 'utf-8' }
+    { encoding: 'utf-8', cwd: INFRA_DIR }
   );
 
   const outputsArray = JSON.parse(outputs);
@@ -214,8 +242,9 @@ try {
   });
 
   // Save outputs.json
-  writeFileSync('outputs.json', JSON.stringify(outputsObj, null, 2));
-  console.log('📄 Stack outputs saved to outputs.json');
+  const outputsPath = join(INFRA_DIR, 'outputs.json');
+  writeFileSync(outputsPath, JSON.stringify(outputsObj, null, 2));
+  console.log('📄 Stack outputs saved to infra/outputs.json');
 
   // Extract values
   const userPoolId = outputsObj.InfraStack.UserPoolId;

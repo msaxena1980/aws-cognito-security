@@ -4,7 +4,7 @@
  */
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { CognitoIdentityProviderClient, ListUsersCommand } from '@aws-sdk/client-cognito-identity-provider';
 
 import { validateEmail } from './utils/validation.js';
@@ -17,6 +17,7 @@ const cognitoClient = new CognitoIdentityProviderClient({});
 
 const EMAIL_MAPPING_TABLE = process.env.EMAIL_MAPPING_TABLE || 'EmailMapping';
 const USER_TABLE = process.env.TABLE_NAME || 'UserSecurity';
+const PASSKEYS_TABLE = process.env.PASSKEYS_TABLE || 'Passkeys';
 const USER_POOL_ID = process.env.USER_POOL_ID;
 
 async function handleRequest(event, context) {
@@ -63,6 +64,36 @@ async function handleRequest(event, context) {
 
       if (profileResult.Item) {
         const authMethods = profileResult.Item.authMethods || { password: true };
+        
+        // Step 2.5: Check if user actually has passkeys registered
+        // This ensures we return accurate auth methods even if profile is stale
+        if (authMethods.passkeys) {
+          try {
+            const passkeyQuery = await docClient.send(new QueryCommand({
+              TableName: PASSKEYS_TABLE,
+              KeyConditionExpression: 'userSub = :sub',
+              ExpressionAttributeValues: { ':sub': userSub },
+              Limit: 1
+            }));
+            
+            // Filter out temporary challenge records
+            const hasRealPasskey = passkeyQuery.Items && passkeyQuery.Items.some(
+              item => !item.userSub.startsWith('CHALLENGE#') && 
+                      !item.userSub.startsWith('AUTH_CHALLENGE#') &&
+                      !item.userSub.startsWith('PASSKEY_VERIFIED#')
+            );
+            
+            if (!hasRealPasskey) {
+              // User has no passkeys, remove from auth methods
+              authMethods.passkeys = false;
+              logger.info('No passkeys found, removing from auth methods');
+            }
+          } catch (passkeyError) {
+            logger.warn('Error checking passkeys, assuming none exist', { error: passkeyError.message });
+            authMethods.passkeys = false;
+          }
+        }
+        
         logger.info('Returning auth methods from profile', { authMethods });
         
         const duration = Date.now() - startTime;

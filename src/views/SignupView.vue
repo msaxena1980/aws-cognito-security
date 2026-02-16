@@ -1,10 +1,11 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { handleSignUp } from '../services/auth';
 
 const email = ref('');
 const password = ref('');
+const confirmPassword = ref('');
 const error = ref('');
 const loading = ref(false);
 const router = useRouter();
@@ -18,7 +19,24 @@ onMounted(() => {
   }
 });
 
+// Check if passwords match
+const passwordsMatch = computed(() => {
+  if (!confirmPassword.value) return true; // Don't show error until user types
+  return password.value === confirmPassword.value;
+});
+
+// Check if form is valid
+const isFormValid = computed(() => {
+  return email.value && password.value && confirmPassword.value && passwordsMatch.value;
+});
+
 async function signup() {
+  // Validate passwords match
+  if (!passwordsMatch.value) {
+    error.value = 'Passwords do not match';
+    return;
+  }
+
   loading.value = true;
   error.value = '';
   try {
@@ -55,11 +73,23 @@ async function signup() {
       <div class="form-group">
         <label for="password">Password</label>
         <input type="password" id="password" v-model="password" required />
+        <span class="password-hint">Min 8 characters with uppercase, lowercase, number & symbol</span>
+      </div>
+      <div class="form-group">
+        <label for="confirmPassword">Confirm Password</label>
+        <input 
+          type="password" 
+          id="confirmPassword" 
+          v-model="confirmPassword" 
+          required 
+          :class="{ 'input-error': confirmPassword && !passwordsMatch }"
+        />
+        <span v-if="confirmPassword && !passwordsMatch" class="error-hint">Passwords do not match</span>
       </div>
       <div v-if="error" class="error-message">
         {{ error }}
       </div>
-      <button type="submit" :disabled="loading" class="auth-button">
+      <button type="submit" :disabled="loading || !isFormValid" class="auth-button">
         {{ loading ? 'Signing up...' : 'Signup' }}
       </button>
     </form>
@@ -97,6 +127,22 @@ async function signup() {
   border-radius: 4px;
   background: var(--color-background);
   color: var(--color-text);
+}
+
+.form-group input.input-error {
+  border-color: #ff4d4f;
+}
+
+.password-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-light);
+  margin-top: 0.25rem;
+}
+
+.error-hint {
+  font-size: 0.75rem;
+  color: #ff4d4f;
+  margin-top: 0.25rem;
 }
 
 .error-message {

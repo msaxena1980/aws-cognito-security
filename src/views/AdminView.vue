@@ -6,6 +6,7 @@ import { authState, handleForgotPassword, handleUpdatePassword, handleSignOut, u
 import { getProfile, updateProfile, startPhoneChange, verifyPhoneOld, verifyPhoneNew, startEmailChange, verifyEmailOld, verifyEmailNew } from '../services/profile';
 import { getVaultMetadata, createEncryptedVaultPackage, saveVaultPackage, changePassphrase as rewrapPassphrase, generatePassphrase, saveEncryptedPassphrase, getPassphraseStatus, verifyPassphrase } from '../services/vault';
 import { completeAccountDeletion, startDeleteOtp, verifyDeleteOtp } from '../services/account';
+import { getCurrentDevicePasskey } from '../services/passkey';
 import QRCode from 'qrcode';
 
 const router = useRouter();
@@ -38,6 +39,7 @@ const originalProfileName = ref('');
 const hasTwoFAProfile = ref(false);
 const hasPasskey = ref(false);
 const hasVaultProfile = ref(false);
+const currentDeviceHasPasskey = ref(false);
 const phoneOtpSent = ref(false);
 const phoneOtpCode = ref('');
 const emailOtpSent = ref(false);
@@ -96,6 +98,16 @@ onMounted(async () => {
     } catch (e) {
       console.warn('Profile fetch failed:', e);
     }
+    
+    // Check if current device has a passkey
+    try {
+      const devicePasskey = await getCurrentDevicePasskey();
+      currentDeviceHasPasskey.value = devicePasskey !== null;
+    } catch (e) {
+      console.warn('Failed to check device passkey:', e);
+      currentDeviceHasPasskey.value = false;
+    }
+    
     const meta = await getVaultMetadata();
     vaultExists.value = !!meta.exists;
     const status = await getPassphraseStatus();
@@ -1001,26 +1013,7 @@ function backToPasswordStep() {
 }
 
 async function registerPasskey() {
-  error.value = '';
-  success.value = '';
-  loading.value = true;
-  try {
-    const nextValue = !hasPasskey.value;
-    await updateProfile({
-      name: profileName.value,
-      email: profileEmail.value,
-      phone: profilePhone.value,
-      passkeyEnabled: nextValue
-    });
-    hasPasskey.value = nextValue;
-    success.value = nextValue
-      ? 'Passkey preference saved. Registration flow coming soon.'
-      : 'Passkey preference removed.';
-  } catch (e) {
-    error.value = e.message || 'Failed to update passkey preference';
-  } finally {
-    loading.value = false;
-  }
+  router.push('/passkey');
 }
 </script>
 
@@ -1093,9 +1086,11 @@ async function registerPasskey() {
         <div class="feature-card">
           <div class="feature-info">
             <div class="feature-title">Passkeys</div>
-            <div class="feature-sub">Consider registering a passkey on your account</div>
+            <div class="feature-sub" v-if="!currentDeviceHasPasskey">Consider registering a passkey on your account</div>
+            <div class="feature-sub" v-else>Passkey is already registered for this device</div>
           </div>
-          <button class="primary-button" @click="registerPasskey">{{ hasPasskey ? 'Change Passkey' : 'Add Passkey' }}</button>
+          <button v-if="!currentDeviceHasPasskey" class="primary-button" @click="registerPasskey">Add Passkeys</button>
+          <button v-else class="primary-button" @click="registerPasskey">Manage Passkey</button>
         </div>
       </section>
 

@@ -198,3 +198,59 @@ export async function verifyEmailNew(code) {
   }
   return body;
 }
+
+// Send OTP to current email for verification (e.g., for sensitive operations)
+export async function sendEmailOtp() {
+  const op = post({
+    apiName: 'AuthApi',
+    path: '/profile/email/send-otp',
+    options: {
+      authMode: 'userPool',
+      headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
+      body: {}
+    }
+  });
+  const res = await op.response;
+  const body = await res.body.json().catch(() => ({}));
+  if (res.statusCode >= 300) {
+    throw new Error(body.message || `Failed to send email OTP: ${res.statusCode}`);
+  }
+  return body;
+}
+
+// Verify OTP sent to current email
+export async function verifyEmailOtp(code) {
+  const op = post({
+    apiName: 'AuthApi',
+    path: '/profile/email/verify-otp',
+    options: {
+      authMode: 'userPool',
+      headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
+      body: { code }
+    }
+  });
+  const res = await op.response;
+  const body = await res.body.json().catch(() => ({}));
+  if (res.statusCode >= 300) {
+    throw new Error(body.message || `Failed to verify email OTP: ${res.statusCode}`);
+  }
+  return body;
+}
+
+// Verify user password (and optionally TOTP) for sensitive operations
+export async function verifyPassword(email, password, totpCode = null) {
+  const op = post({
+    apiName: 'AuthApi',
+    path: '/verify-credentials',
+    options: {
+      headers: { 'Content-Type': 'application/json' },
+      body: { email, password, totpCode }
+    }
+  });
+  const res = await op.response;
+  const body = await res.body.json().catch(() => ({}));
+  if (res.statusCode >= 300) {
+    throw new Error(body.message || `Failed to verify password: ${res.statusCode}`);
+  }
+  return body;
+}
