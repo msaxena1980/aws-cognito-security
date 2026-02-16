@@ -16,7 +16,6 @@ async function logout() {
       <div class="nav-inner">
         <div class="nav-left">
           <RouterLink to="/" class="nav-link">Home</RouterLink>
-          <RouterLink to="/about" class="nav-link">About</RouterLink>
           <RouterLink to="/admin" class="nav-link">Admin</RouterLink>
         </div>
         <div class="nav-right">

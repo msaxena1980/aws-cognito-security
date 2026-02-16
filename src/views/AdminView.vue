@@ -596,42 +596,51 @@ const deleteWords = ref(Array(9).fill(''));
 const deleteOtpCode = ref('');
 const inlineDeleteCode = ref('');
 const deletePassword = ref('');
+const deleteTotpCode = ref('');
 const deleteFallback = ref(false);
+const deleteRequiresMfa = ref(false);
+const deleteError = ref('');
+const deleteSuccess = ref('');
 
 function startDeleteFlow() {
   error.value = '';
   success.value = '';
+  deleteError.value = '';
+  deleteSuccess.value = '';
   deleteStep.value = 'warning';
   deleteWords.value = Array(9).fill('');
   deleteOtpCode.value = '';
   inlineDeleteCode.value = '';
   deletePassword.value = '';
+  deleteTotpCode.value = '';
   deleteFallback.value = false;
+  deleteRequiresMfa.value = false;
   showDeleteModal.value = true;
 }
 
 async function confirmDeleteWarning() {
   loading.value = true;
-  error.value = '';
+  deleteError.value = '';
+  deleteSuccess.value = '';
   try {
     try {
       const resp = await startDeleteOtp();
       inlineDeleteCode.value = resp?.code || '';
-      success.value = inlineDeleteCode.value ? `Dev code: ${inlineDeleteCode.value}` : 'A verification code has been sent to your email.';
+      deleteSuccess.value = inlineDeleteCode.value ? `Dev code: ${inlineDeleteCode.value}` : 'A verification code has been sent to your email.';
       deleteStep.value = 'otp';
     } catch (e) {
       const status = e?.response?.statusCode || e?.statusCode;
       if (status === 410) {
         deleteFallback.value = true;
         await sendEmailOtp();
-        success.value = 'A verification code has been sent to your email.';
+        deleteSuccess.value = 'A verification code has been sent to your email.';
         deleteStep.value = 'otp';
       } else {
         throw e;
       }
     }
   } catch (e) {
-    error.value = e.message || 'Failed to start deletion';
+    deleteError.value = e.message || 'Failed to start deletion';
   } finally {
     loading.value = false;
   }
@@ -641,12 +650,12 @@ async function submitDeleteOtp() {
   const raw = (deleteOtpCode.value || '').trim();
   const code = raw.replace(/\D/g, '');
   if (!code || code.length !== 6) {
-    error.value = 'Enter the 6-digit code sent to your email';
+    deleteError.value = 'Enter the 6-digit code sent to your email';
     return;
   }
   loading.value = true;
-  error.value = '';
-  success.value = '';
+  deleteError.value = '';
+  deleteSuccess.value = '';
   try {
     try {
       await verifyDeleteOtp(code);
@@ -664,10 +673,10 @@ async function submitDeleteOtp() {
       const status = await getPassphraseStatus();
       passphraseStored.value = !!status.stored;
     } catch {}
-    success.value = 'Email verified.';
+    deleteSuccess.value = 'Email verified.';
     deleteStep.value = 'password';
   } catch (e) {
-    error.value = e.message || 'Code verification failed';
+    deleteError.value = e.message || 'Code verification failed';
   } finally {
     loading.value = false;
   }
@@ -676,39 +685,76 @@ async function submitDeleteOtp() {
 async function submitDeletePassword() {
   const pwd = (deletePassword.value || '').trim();
   if (!pwd) {
-    error.value = 'Enter your password';
+    deleteError.value = 'Enter your password';
     return;
   }
   loading.value = true;
-  error.value = '';
-  success.value = '';
+  deleteError.value = '';
+  deleteSuccess.value = '';
   try {
-    try {
-      await handleSignIn(currentEmail.value, pwd);
-    } catch (err) {
-      if (err?.name !== 'InvalidStateException' && err?.name !== 'UserAlreadyAuthenticatedException') {
-        throw err;
-      }
-    }
-    if (passphraseStored.value) {
-      success.value = 'Password verified. Enter your 9-word passphrase.';
-      deleteStep.value = 'passphrase';
+    // Verify password (and check if MFA is required)
+    const verifyResult = await verifyCredentials(currentEmail.value, pwd, null);
+    
+    if (verifyResult.requiresMfa) {
+      // User has 2FA enabled, need to verify TOTP code
+      deleteRequiresMfa.value = true;
+      deleteSuccess.value = 'Password verified. Enter your 2FA code.';
+      deleteStep.value = '2fa';
     } else {
+      // No 2FA, check if passphrase is required
       try {
-        await completeAccountDeletion(undefined);
-        success.value = 'Account deleted';
-        showDeleteModal.value = false;
-        await handleSignOut();
-        router.push('/');
-      } catch (delErr) {
-        // If backend requires passphrase anyway or additional verification,
-        // pivot to passphrase step instead of failing the flow
-        success.value = 'Password verified. Enter your 9-word passphrase.';
+        const status = await getPassphraseStatus();
+        passphraseStored.value = !!status.stored;
+      } catch {}
+      
+      if (passphraseStored.value) {
+        deleteSuccess.value = 'Password verified. Enter your 9-word passphrase.';
         deleteStep.value = 'passphrase';
+      } else {
+        // No passphrase, proceed with deletion
+        await completeAccountDeletion(null);
+        deleteSuccess.value = 'Your account and all associated data have been permanently deleted. You can sign up again if needed.';
+        deleteStep.value = 'complete';
       }
     }
   } catch (e) {
-    error.value = e.message || 'Password verification failed';
+    deleteError.value = e.message || 'Password verification failed';
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function submitDelete2FA() {
+  const code = (deleteTotpCode.value || '').trim();
+  if (!code || code.length !== 6) {
+    deleteError.value = 'Enter your 6-digit 2FA code';
+    return;
+  }
+  loading.value = true;
+  deleteError.value = '';
+  deleteSuccess.value = '';
+  try {
+    // Verify password + TOTP
+    const pwd = (deletePassword.value || '').trim();
+    await verifyCredentials(currentEmail.value, pwd, code);
+    
+    // Check if passphrase is required
+    try {
+      const status = await getPassphraseStatus();
+      passphraseStored.value = !!status.stored;
+    } catch {}
+    
+    if (passphraseStored.value) {
+      deleteSuccess.value = '2FA verified. Enter your 9-word passphrase.';
+      deleteStep.value = 'passphrase';
+    } else {
+      // No passphrase, proceed with deletion
+      await completeAccountDeletion(null);
+      deleteSuccess.value = 'Your account and all associated data have been permanently deleted. You can sign up again if needed.';
+      deleteStep.value = 'complete';
+    }
+  } catch (e) {
+    deleteError.value = e.message || '2FA verification failed';
   } finally {
     loading.value = false;
   }
@@ -717,22 +763,27 @@ async function submitDeletePassword() {
 async function submitDeletePassphrase() {
   const joined = deleteWords.value.map(w => (w || '').trim().toLowerCase()).filter(Boolean).join(' ');
   if (joined.split(/\s+/).length !== 9) {
-    error.value = 'Enter all 9 words';
+    deleteError.value = 'Enter all 9 words';
     return;
   }
   loading.value = true;
-  error.value = '';
+  deleteError.value = '';
+  deleteSuccess.value = '';
   try {
     await completeAccountDeletion(joined);
-    success.value = 'Account deleted';
-    showDeleteModal.value = false;
-    await handleSignOut();
-    router.push('/');
+    deleteSuccess.value = 'Your account and all associated data have been permanently deleted. You can sign up again if needed.';
+    deleteStep.value = 'complete';
   } catch (e) {
-    error.value = e.message || 'Deletion failed';
+    deleteError.value = e.message || 'Deletion failed';
   } finally {
     loading.value = false;
   }
+}
+
+async function finishAccountDeletion() {
+  showDeleteModal.value = false;
+  await handleSignOut();
+  router.push('/');
 }
  
 function openEmailChange() {
@@ -1143,11 +1194,15 @@ async function registerPasskey() {
           <span v-if="deleteStep==='warning'">Delete account</span>
           <span v-else-if="deleteStep==='otp'">Verify Email</span>
           <span v-else-if="deleteStep==='password'">Verify Password</span>
+          <span v-else-if="deleteStep==='2fa'">Verify 2FA</span>
+          <span v-else-if="deleteStep==='complete'">Account Deleted</span>
           <span v-else>Verify passphrase</span>
         </div>
-        <button class="modal-close" @click="showDeleteModal = false">×</button>
+        <button class="modal-close" @click="showDeleteModal = false" v-if="deleteStep !== 'complete'">×</button>
       </div>
       <div class="modal-body">
+        <div v-if="deleteError" class="error-message">{{ deleteError }}</div>
+        <div v-if="deleteSuccess" class="success-message">{{ deleteSuccess }}</div>
         <div v-if="deleteStep==='warning'">
           <div class="callout-title">This action is permanent</div>
           <div class="callout-text">All your data will be removed from this application. This cannot be undone.</div>
@@ -1181,7 +1236,21 @@ async function registerPasskey() {
             <button class="primary-button" :disabled="loading" @click="submitDeletePassword">{{ loading ? 'Verifying...' : 'Verify Password' }}</button>
           </div>
         </div>
-        <div v-else>
+        <div v-else-if="deleteStep==='2fa'">
+          <div class="form-group">
+            <label for="del2fa">2FA Code</label>
+            <OtpInput
+              id="del2fa"
+              v-model="deleteTotpCode"
+              :length="6"
+            />
+          </div>
+          <div class="modal-actions">
+            <button class="secondary-button" @click="showDeleteModal=false">Cancel</button>
+            <button class="primary-button" :disabled="loading" @click="submitDelete2FA">{{ loading ? 'Verifying...' : 'Verify 2FA' }}</button>
+          </div>
+        </div>
+        <div v-else-if="deleteStep==='passphrase'">
           <div class="callout-title">Enter your 9-word passphrase</div>
           <div class="word-chip-row inline-input-row">
             <span v-for="(w,i) in deleteWords" :key="i" class="chip">
@@ -1191,6 +1260,13 @@ async function registerPasskey() {
           <div class="modal-actions">
             <button class="secondary-button" @click="showDeleteModal=false">Cancel</button>
             <button class="primary-button" :disabled="loading" @click="submitDeletePassphrase">{{ loading ? 'Deleting...' : 'Delete Account' }}</button>
+          </div>
+        </div>
+        <div v-else-if="deleteStep==='complete'">
+          <div class="callout-title">Account Successfully Deleted</div>
+          <div class="callout-text">Your account and all associated data have been permanently deleted. You can sign up again if needed.</div>
+          <div class="modal-actions">
+            <button class="primary-button" @click="finishAccountDeletion">Go to Login</button>
           </div>
         </div>
       </div>

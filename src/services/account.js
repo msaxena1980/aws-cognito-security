@@ -49,14 +49,14 @@ export async function verifyDeleteOtp(code) {
   return body;
 }
 
-export async function completeAccountDeletion(passphrase) {
+export async function completeAccountDeletion(passphrase = null) {
   const op = post({
     apiName: 'AuthApi',
     path: '/account/delete/complete',
     options: {
       authMode: 'userPool',
       headers: { ...(await authHeaders()), 'Content-Type': 'application/json' },
-      body: { passphrase }
+      body: passphrase ? { passphrase } : {}
     }
   });
   const res = await op.response;

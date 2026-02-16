@@ -298,7 +298,7 @@ function goToVerification() {
 
     <!-- Step 3: Authenticate -->
     <form v-else-if="step === 'auth'" @submit.prevent="login" class="auth-form">
-      <p>Authenticating for <strong>{{ email }}</strong></p>
+      <p><strong>{{ email }}</strong></p>
       
       <div v-if="selectedMethod === 'password'" class="form-group">
         <label for="password">Password</label>

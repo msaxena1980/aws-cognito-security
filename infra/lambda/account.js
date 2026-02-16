@@ -56,22 +56,33 @@ export const handler = async (event) => {
         return { statusCode: 400, headers: CORS, body: JSON.stringify({ message: "Invalid JSON" }) };
       }
       const passphrase = payload?.passphrase;
-      if (!passphrase) {
-        return { statusCode: 400, headers: CORS, body: JSON.stringify({ message: "passphrase is required" }) };
+      
+      // Check if passphrase is stored
+      const passphraseRecord = await doc.send(new GetCommand({ 
+        TableName: tableName, 
+        Key: { pk, sk: "PASSPHRASE" }, 
+        ProjectionExpression: "ciphertext" 
+      }));
+      
+      const hasPassphrase = !!passphraseRecord.Item?.ciphertext;
+      
+      // If passphrase is set up, verify it
+      if (hasPassphrase) {
+        if (!passphrase) {
+          return { statusCode: 400, headers: CORS, body: JSON.stringify({ message: "Passphrase is required" }) };
+        }
+        if (!kmsKeyId) {
+          return { statusCode: 500, headers: CORS, body: JSON.stringify({ message: "KMS key not configured" }) };
+        }
+        const blob = Buffer.from(passphraseRecord.Item.ciphertext, "base64");
+        const dec = await kms.send(new DecryptCommand({ CiphertextBlob: blob, EncryptionContext: { user: sub } }));
+        const plain = Buffer.from(dec.Plaintext).toString("utf-8");
+        if (norm(plain) !== norm(passphrase)) {
+          return { statusCode: 400, headers: CORS, body: JSON.stringify({ message: "Passphrase incorrect" }) };
+        }
       }
-      if (!kmsKeyId) {
-        return { statusCode: 500, headers: CORS, body: JSON.stringify({ message: "KMS key not configured" }) };
-      }
-      const stored = await doc.send(new GetCommand({ TableName: tableName, Key: { pk, sk: "PASSPHRASE" }, ProjectionExpression: "ciphertext" }));
-      if (!stored.Item?.ciphertext) {
-        return { statusCode: 404, headers: CORS, body: JSON.stringify({ message: "Passphrase not found" }) };
-      }
-      const blob = Buffer.from(stored.Item.ciphertext, "base64");
-      const dec = await kms.send(new DecryptCommand({ CiphertextBlob: blob, EncryptionContext: { user: sub } }));
-      const plain = Buffer.from(dec.Plaintext).toString("utf-8");
-      if (norm(plain) !== norm(passphrase)) {
-        return { statusCode: 400, headers: CORS, body: JSON.stringify({ message: "Passphrase incorrect" }) };
-      }
+      
+      // Delete all user data
       let lastKey = undefined;
       while (true) {
         const q = await doc.send(new QueryCommand({

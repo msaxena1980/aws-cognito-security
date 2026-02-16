@@ -10,9 +10,6 @@ defineProps({
 <template>
   <div class="greetings">
     <h1 class="green">{{ msg }}</h1>
-    <h3>
-      A project with AWS + Vite + Vue 3 + Vue Router.
-    </h3>
   </div>
 </template>
 
