@@ -8,7 +8,14 @@
     "cdk": "cdk",
     "create": "node create.js",
     "destroy": "node destroy.js",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "deploy": "node create.js",
+    "deploy:dev": "node scripts/deploy-with-env.js dev",
+    "deploy:prod": "node scripts/deploy-with-env.js prod",
+    "destroy:dev": "node scripts/destroy-with-env.js dev",
+    "destroy:prod": "node scripts/destroy-with-env.js prod",
+    "validate:dev": "node scripts/load-env.js dev",
+    "validate:prod": "node scripts/load-env.js prod"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.170.0",

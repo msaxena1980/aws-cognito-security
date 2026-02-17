@@ -20,6 +20,24 @@ class InfraStack extends cdk.Stack {
     super(scope, id, props);
 
     // 1. COGNITO USER POOL
+    
+    // Create IAM role for Cognito to send SMS via SNS
+    const cognitoSmsRole = new cdk.aws_iam.Role(this, 'CognitoSMSRole', {
+      assumedBy: new cdk.aws_iam.ServicePrincipal('cognito-idp.amazonaws.com'),
+      description: 'IAM role for Cognito User Pool to send SMS via SNS',
+      inlinePolicies: {
+        'CognitoSNSPolicy': new cdk.aws_iam.PolicyDocument({
+          statements: [
+            new cdk.aws_iam.PolicyStatement({
+              effect: cdk.aws_iam.Effect.ALLOW,
+              actions: ['sns:Publish'],
+              resources: ['*'],
+            }),
+          ],
+        }),
+      },
+    });
+
     const userPool = new cdk.aws_cognito.UserPool(this, 'UserPoolV2', {
       userPoolName: 'aws-cognito-security-user-pool',
       selfSignUpEnabled: true,
@@ -33,7 +51,13 @@ class InfraStack extends cdk.Stack {
       },
       autoVerify: { email: true },
       mfa: cdk.aws_cognito.Mfa.OPTIONAL,
-      mfaSecondFactor: { sms: false, otp: true },
+      mfaSecondFactor: { 
+        sms: true,  // Enable SMS MFA
+        otp: true   // Keep TOTP as well
+      },
+      // SMS Configuration for Cognito
+      smsRole: cognitoSmsRole,
+      smsRoleExternalId: 'cognito-sms-external-id',
       passwordPolicy: {
         minLength: 8,
         requireLowercase: true,
@@ -328,6 +352,10 @@ class InfraStack extends cdk.Stack {
     }));
     phoneLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
       actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+      resources: ['*'],
+    }));
+    phoneLambda.addToRolePolicy(new cdk.aws_iam.PolicyStatement({
+      actions: ['sns:Publish'],
       resources: ['*'],
     }));
 

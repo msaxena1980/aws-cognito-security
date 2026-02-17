@@ -1,0 +1,29 @@
+# CDK
+cdk.out/
+*.js.map
+*.d.ts
+node_modules/
+
+# Environment files (keep templates only)
+config/dev.env
+config/prod.env
+
+# Keep example file
+!config/.env.example
+
+# Outputs
+outputs.json
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
